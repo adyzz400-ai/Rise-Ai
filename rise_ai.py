@@ -319,12 +319,9 @@ class PlatformSelect(Select):
                 ephemeral=True
             )
         else:
-            await interaction.response.send_message(
-                "You have the active slot.\nPlease log in:",
-                ephemeral=True
-            )
+            # FIX: Send modal directly as the response, not via followup
             modal = LoginModal(interaction.user.id)
-            await interaction.followup.send_modal(modal)
+            await interaction.response.send_modal(modal)
 
 class QueueView(View):
     def __init__(self):
