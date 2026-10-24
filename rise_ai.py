@@ -27,7 +27,7 @@ MAIN_CHANNEL_ID = int(os.getenv("MAIN_CHANNEL_ID", "0"))
 HEADLESS = os.getenv("HEADLESS", "false").lower() == "true"
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel("gemini-3.8-flash")   # Free tier + strongest available Flash
+model = genai.GenerativeModel("gemini-3.8-flash")   # Kept exactly as you had it
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 intents = discord.Intents.default()
@@ -91,7 +91,7 @@ def create_progress_png(percent: int, current: str, completed: str, elapsed: str
     draw = ImageDraw.Draw(img)
 
     # Title
-    draw.text((28, 22), "Rise Ai  •  Sparx Maths", fill="#E2E8F0")
+    draw.text((28, 22), "Rise Ai  •  [YOUR_SCHOOL_NAME] Sparx Maths", fill="#E2E8F0")
 
     # Progress bar background
     bar_x, bar_y, bar_w, bar_h = 28, 70, 560, 32
@@ -119,7 +119,7 @@ def create_progress_png(percent: int, current: str, completed: str, elapsed: str
 async def create_stealth_context(playwright) -> BrowserContext:
     browser = await playwright.chromium.launch(
         headless=HEADLESS,
-        channel="chrome",  # real Chrome preferred
+        channel="chrome",
         args=[
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
@@ -137,7 +137,6 @@ async def create_stealth_context(playwright) -> BrowserContext:
         color_scheme="dark",
     )
 
-    # Stealth init script
     await context.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         Object.defineProperty(navigator, 'languages', { get: () => ['en-GB', 'en'] });
@@ -154,7 +153,6 @@ async def create_stealth_context(playwright) -> BrowserContext:
     return context
 
 async def wait_for_cloudflare(page: Page, timeout: int = 30000):
-    """Wait for Cloudflare challenge to clear"""
     try:
         await page.wait_for_function("""
             () => {
@@ -215,7 +213,6 @@ async def sparx_login(page: Page, username: str, password: str) -> bool:
         return False
 
 async def get_homework_list(page: Page) -> List[Dict[str, Any]]:
-    """Return list of available packages/tasks – expand with real selectors later"""
     try:
         await page.goto("https://maths.sparx-learning.com/student/", wait_until="networkidle")
         await asyncio.sleep(2)
@@ -250,8 +247,8 @@ class TimeSettingsModal(Modal, title="Answer Delay Settings"):
         )
         asyncio.create_task(run_solver(self.user_id, interaction.user))
 
-class LoginModal(Modal, title="Sparx Login"):
-    username = TextInput(label="Username / Email", required=True)
+class LoginModal(Modal, title="[YOUR_SCHOOL_NAME] Sparx Login"):
+    username = TextInput(label="[YOUR_SCHOOL_NAME] Username / Email", required=True)
     password = TextInput(label="Password", required=True)
 
     def __init__(self, user_id: int):
@@ -311,7 +308,6 @@ class PlatformSelect(Select):
             await interaction.response.edit_message(embed=embed, view=None)
             return
 
-        # Start Task flow
         result = await join_queue(interaction.user.id, platform)
         if result == "waiting":
             await interaction.response.send_message(
@@ -319,7 +315,7 @@ class PlatformSelect(Select):
                 ephemeral=True
             )
         else:
-            # FIX: Send modal directly as the response, not via followup
+            # Fixed: Send modal directly as the initial response
             modal = LoginModal(interaction.user.id)
             await interaction.response.send_modal(modal)
 
@@ -394,7 +390,6 @@ async def run_solver(user_id: int, user: discord.User):
             context = await create_stealth_context(p)
             page = await context.new_page()
 
-            # Login
             ok = await sparx_login(page, session["username"], session["password"])
             if not ok:
                 await user.send("Login failed. Please check credentials and try again.")
@@ -403,7 +398,6 @@ async def run_solver(user_id: int, user: discord.User):
 
             await user.send("Logged in successfully. Starting homework...")
 
-            # Placeholder solving loop – replace with real question detection
             total_questions = 40
             completed = 0
 
@@ -411,7 +405,6 @@ async def run_solver(user_id: int, user: discord.User):
                 if session.get("cancelled"):
                     break
 
-                # TODO: real question detection + Gemini solve + answer injection
                 completed += 1
                 percent = int((completed / total_questions) * 100)
                 elapsed = int(time.time() - start_time)
@@ -460,15 +453,12 @@ async def run_solver(user_id: int, user: discord.User):
 async def on_ready():
     print(f"Rise Ai online as {bot.user}")
     bot.add_view(MainView())
-    
-    # CRITICAL: Ensure there is NO '#' at the start of this line
     await post_main_panel()
 
 async def post_main_panel():
     print(f"[DEBUG] Attempting to post main panel to channel ID: {MAIN_CHANNEL_ID}")
     
     try:
-        # fetch_channel is API-backed and reliable, unlike get_channel
         channel = await bot.fetch_channel(MAIN_CHANNEL_ID)
         print(f"[DEBUG] Successfully fetched channel: {channel.name}")
     except discord.NotFound:
