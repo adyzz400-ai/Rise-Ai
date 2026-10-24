@@ -463,13 +463,25 @@ async def run_solver(user_id: int, user: discord.User):
 async def on_ready():
     print(f"Rise Ai online as {bot.user}")
     bot.add_view(MainView())
-    # Uncomment once to post the main panel
-    # await post_main_panel()
+    
+    # CRITICAL: Ensure there is NO '#' at the start of this line
+    await post_main_panel()
 
 async def post_main_panel():
-    channel = bot.get_channel(MAIN_CHANNEL_ID)
-    if not channel:
-        print("MAIN_CHANNEL_ID not found")
+    print(f"[DEBUG] Attempting to post main panel to channel ID: {MAIN_CHANNEL_ID}")
+    
+    try:
+        # fetch_channel is API-backed and reliable, unlike get_channel
+        channel = await bot.fetch_channel(MAIN_CHANNEL_ID)
+        print(f"[DEBUG] Successfully fetched channel: {channel.name}")
+    except discord.NotFound:
+        print(f"[ERROR] Channel ID {MAIN_CHANNEL_ID} not found.")
+        return
+    except discord.Forbidden:
+        print(f"[ERROR] Bot lacks permission to VIEW channel {MAIN_CHANNEL_ID}.")
+        return
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch channel: {e}")
         return
 
     embed = Embed(
@@ -482,7 +494,14 @@ async def post_main_panel():
         ),
         color=Color.dark_blue()
     )
-    await channel.send(embed=embed, view=MainView())
+    
+    try:
+        await channel.send(embed=embed, view=MainView())
+        print("[SUCCESS] Main panel posted successfully.")
+    except discord.Forbidden:
+        print("[ERROR] Bot lacks permission to SEND MESSAGES in this channel.")
+    except Exception as e:
+        print(f"[ERROR] Failed to send message: {e}")
 
 # ====================== RUN ======================
 if __name__ == "__main__":
