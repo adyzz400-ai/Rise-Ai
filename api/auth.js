@@ -4,7 +4,7 @@ import stealth from 'puppeteer-extra-plugin-stealth';
 
 chromium.use(stealth());
 
-export async function getSparxSession(username, password, schoolName) {
+export async function getSparxSession(username, password, schoolName, onProgress = () => {}) {
     const browser = await chromium.launch({
         headless: true,
         args: [
@@ -12,7 +12,7 @@ export async function getSparxSession(username, password, schoolName) {
             '--disable-gpu',
             '--disable-dev-shm-usage',
             '--no-sandbox',
-            '--single-process'
+            '--disable-accelerated-2d-canvas'
         ]
     });
 
@@ -25,43 +25,48 @@ export async function getSparxSession(username, password, schoolName) {
     page.setDefaultTimeout(120000);
 
     try {
+        onProgress('Navigating to school selector...');
         await page.goto('https://selectschool.sparx-learning.com/?app=sparx_maths&forget=1', {
-            waitUntil: 'domcontentloaded',
+            waitUntil: 'commit', // Do not wait for load/domcontentloaded
             timeout: 90000
         });
 
+        onProgress('Waiting for school search input...');
         const schoolInput = page.locator('input._Input_hz2wn_4');
-        await schoolInput.waitFor({ timeout: 60000 });
+        await schoolInput.waitFor({ state: 'attached', timeout: 60000 });
         
-        // Type slowly to trigger React onChange events
+        onProgress(`Typing school name: ${schoolName}...`);
         await schoolInput.click();
         await schoolInput.fill('');
-        await schoolInput.pressSequentially(schoolName, { delay: 150 });
-        await page.waitForTimeout(3000); // Wait for API fetch and render
+        await schoolInput.pressSequentially(schoolName, { delay: 100 });
+        await page.waitForTimeout(3000); // Grace period for React/API
 
-        // Try pressing Enter to select the top result (most robust method)
+        onProgress('Selecting school...');
         await schoolInput.press('Enter');
         await page.waitForTimeout(2000);
 
-        // Fallback: If still on the selection page, try clicking the text directly
+        // Fallback: click text if Enter failed
         if (page.url().includes('selectschool')) {
             const textOption = page.locator(`text="${schoolName}"`).first();
             if (await textOption.isVisible().catch(() => false)) {
                 await textOption.click({ timeout: 15000, force: true });
-            } else {
-                // Last resort: look for any clickable item containing the name
-                await page.locator('li, .list-item, div[role="button"]').filter({ hasText: schoolName }).first().click({ timeout: 15000, force: true });
             }
         }
 
-        await page.waitForURL(/oauth2\/auth/, { timeout: 90000 });
+        onProgress('Waiting for login page...');
+        await page.waitForURL(/oauth2\/auth/, { timeout: 90000, waitUntil: 'commit' });
         await page.waitForSelector('input[name="username"]', { timeout: 60000 });
+
+        onProgress('Entering credentials...');
         await page.fill('input[name="username"]', username);
         await page.fill('input[name="password"]', password);
         await page.click('button.login-button');
 
-        await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 120000 });
+        onProgress('Solving Cloudflare challenge / logging in...');
+        await page.waitForNavigation({ waitUntil: 'commit', timeout: 120000 });
+        await page.waitForTimeout(5000); // Grace period for cf_clearance
 
+        onProgress('Extracting Bearer token...');
         const tokenText = await page.evaluate(async () => {
             const res = await fetch('https://api.sparx-learning.com/token');
             return await res.text();
@@ -72,8 +77,9 @@ export async function getSparxSession(username, password, schoolName) {
 
         if (!bearerToken || !cfClearance) throw new Error('Missing credentials.');
 
+        onProgress('Scraping homework dashboard...');
         await page.goto('https://maths.sparx-learning.com/student/homework?pkg_type=homework', {
-            waitUntil: 'domcontentloaded',
+            waitUntil: 'commit',
             timeout: 90000
         });
         await page.waitForSelector('a[href*="pkg_id="]', { timeout: 60000 }).catch(() => {});
@@ -106,6 +112,7 @@ export async function getSparxSession(username, password, schoolName) {
             return results;
         });
 
+        onProgress('Login complete.');
         return { token: bearerToken, cfClearance, homeworks };
     } finally {
         await browser.close();
