@@ -5,29 +5,25 @@ import stealth from 'puppeteer-extra-plugin-stealth';
 chromium.use(stealth());
 
 export async function getSparxSession(username, password, schoolName, onProgress = () => {}) {
-    const browser = await chromium.launch({
-        headless: true,
+    // Headed mode + persistent context saves the cf_clearance cookie, so you only solve once.
+    const browser = await chromium.launchPersistentContext('./sparx-profile', {
+        headless: false,
         args: [
             '--disable-blink-features=AutomationControlled',
             '--disable-gpu',
             '--disable-dev-shm-usage',
             '--no-sandbox',
-            '--disable-accelerated-2d-canvas'
+            '--window-size=1280,800'
         ]
     });
 
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        viewport: { width: 1280, height: 800 }
-    });
-
-    const page = await context.newPage();
+    const page = browser.pages()[0] || await browser.newPage();
     page.setDefaultTimeout(120000);
 
     try {
         onProgress('Navigating to school selector...');
         await page.goto('https://selectschool.sparx-learning.com/?app=sparx_maths&forget=1', {
-            waitUntil: 'commit', // Do not wait for load/domcontentloaded
+            waitUntil: 'commit',
             timeout: 90000
         });
 
@@ -35,17 +31,17 @@ export async function getSparxSession(username, password, schoolName, onProgress
         const schoolInput = page.locator('input._Input_hz2wn_4');
         await schoolInput.waitFor({ state: 'attached', timeout: 60000 });
         
-        onProgress(`Typing school name: ${schoolName}...`);
+        onProgress(`Typing school: ${schoolName}...`);
         await schoolInput.click();
         await schoolInput.fill('');
         await schoolInput.pressSequentially(schoolName, { delay: 100 });
-        await page.waitForTimeout(3000); // Grace period for React/API
+        await page.waitForTimeout(3000);
 
         onProgress('Selecting school...');
         await schoolInput.press('Enter');
         await page.waitForTimeout(2000);
 
-        // Fallback: click text if Enter failed
+        // Fallback: click the text option if Enter fails
         if (page.url().includes('selectschool')) {
             const textOption = page.locator(`text="${schoolName}"`).first();
             if (await textOption.isVisible().catch(() => false)) {
@@ -53,8 +49,7 @@ export async function getSparxSession(username, password, schoolName, onProgress
             }
         }
 
-        onProgress('Waiting for login page...');
-        await page.waitForURL(/oauth2\/auth/, { timeout: 90000, waitUntil: 'commit' });
+        onProgress('Waiting for login form...');
         await page.waitForSelector('input[name="username"]', { timeout: 60000 });
 
         onProgress('Entering credentials...');
@@ -62,26 +57,65 @@ export async function getSparxSession(username, password, schoolName, onProgress
         await page.fill('input[name="password"]', password);
         await page.click('button.login-button');
 
-        onProgress('Solving Cloudflare challenge / logging in...');
-        await page.waitForNavigation({ waitUntil: 'commit', timeout: 120000 });
-        await page.waitForTimeout(5000); // Grace period for cf_clearance
+        onProgress('Solving Cloudflare / logging in...');
+        
+        // POLLING LOOP: Do not wait for navigation. Poll for the token or dashboard URL.
+        let bearerToken = null;
+        let cfClearance = null;
+        const startTime = Date.now();
+        const timeoutMs = 120000; // 2 minutes max for Cloudflare
 
-        onProgress('Extracting Bearer token...');
-        const tokenText = await page.evaluate(async () => {
-            const res = await fetch('https://api.sparx-learning.com/token');
-            return await res.text();
-        });
-        const bearerToken = tokenText.replace('bearer ', '').trim();
-        const cookies = await context.cookies();
-        const cfClearance = cookies.find(c => c.name === 'cf_clearance')?.value;
+        while (Date.now() - startTime < timeoutMs) {
+            const currentUrl = page.url();
+            const isDashboard = currentUrl.includes('/student/homework') || currentUrl.includes('/student');
 
-        if (!bearerToken || !cfClearance) throw new Error('Missing credentials.');
+            // Try to fetch the token via in-page fetch
+            const tokenText = await page.evaluate(async () => {
+                try {
+                    const res = await fetch('https://api.sparx-learning.com/token');
+                    return await res.text();
+                } catch (e) {
+                    return null;
+                }
+            }).catch(() => null);
+
+            if (tokenText && tokenText.includes('bearer')) {
+                bearerToken = tokenText.replace('bearer ', '').trim();
+                const cookies = await browser.cookies();
+                cfClearance = cookies.find(c => c.name === 'cf_clearance')?.value;
+                if (bearerToken && cfClearance) {
+                    onProgress('Token extracted. Cloudflare cleared.');
+                    break;
+                }
+            }
+
+            // If we have the token but the URL isn't the dashboard yet, navigate directly.
+            if (bearerToken && !isDashboard) {
+                onProgress('Navigating to homework dashboard...');
+                await page.goto('https://maths.sparx-learning.com/student/homework?pkg_type=homework', {
+                    waitUntil: 'commit',
+                    timeout: 90000
+                });
+                await page.waitForTimeout(5000); // Give React time to render
+            }
+
+            await page.waitForTimeout(3000);
+            onProgress(`Waiting for Cloudflare... (${Math.floor((Date.now() - startTime) / 1000)}s)`);
+        }
+
+        if (!bearerToken || !cfClearance) {
+            throw new Error('Cloudflare challenge did not clear. Try restarting the bot or using a residential proxy.');
+        }
 
         onProgress('Scraping homework dashboard...');
-        await page.goto('https://maths.sparx-learning.com/student/homework?pkg_type=homework', {
-            waitUntil: 'commit',
-            timeout: 90000
-        });
+        // Ensure we are on the dashboard before scraping
+        if (!page.url().includes('/student/homework')) {
+            await page.goto('https://maths.sparx-learning.com/student/homework?pkg_type=homework', {
+                waitUntil: 'commit',
+                timeout: 90000
+            });
+        }
+        // Wait for the homework links to appear
         await page.waitForSelector('a[href*="pkg_id="]', { timeout: 60000 }).catch(() => {});
 
         const homeworks = await page.evaluate(() => {
