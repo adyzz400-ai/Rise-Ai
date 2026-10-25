@@ -186,7 +186,9 @@ client.on('interactionCreate', async interaction => {
                 
                 await interaction.editReply({ content: 'Authenticated!', embeds: [selectEmbed], components: [selectRow, timeBtn] });
             } catch (err) {
-                await interaction.editReply({ content: `Login failed: ${err.message}` });
+                // TRUNCATE ERROR: Discord rejects content > 2000 chars.
+                const errorMsg = `Login failed: ${err.message}`.substring(0, 1900);
+                await interaction.editReply({ content: errorMsg }).catch(() => {});
             }
         }
 
@@ -249,7 +251,8 @@ client.on('interactionCreate', async interaction => {
 
                 await interaction.editReply({ embeds: [embed], components: [jobRow] });
             } catch (e) {
-                await interaction.editReply({ content: `Failed to load package: ${e.message}` });
+                const errorMsg = `Failed to load package: ${e.message}`.substring(0, 1900);
+                await interaction.editReply({ content: errorMsg });
             }
         }
     }
