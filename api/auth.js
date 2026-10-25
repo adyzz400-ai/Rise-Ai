@@ -12,7 +12,7 @@ export async function getSparxSession(username, password, schoolName) {
             '--disable-gpu',
             '--disable-dev-shm-usage',
             '--no-sandbox',
-            '--single-process' // Lowers RAM & CPU footprint for 1GB container
+            '--single-process'
         ]
     });
 
@@ -32,9 +32,27 @@ export async function getSparxSession(username, password, schoolName) {
 
         const schoolInput = page.locator('input._Input_hz2wn_4');
         await schoolInput.waitFor({ timeout: 60000 });
-        await schoolInput.fill(schoolName);
+        
+        // Type slowly to trigger React onChange events
+        await schoolInput.click();
+        await schoolInput.fill('');
+        await schoolInput.pressSequentially(schoolName, { delay: 150 });
+        await page.waitForTimeout(3000); // Wait for API fetch and render
+
+        // Try pressing Enter to select the top result (most robust method)
+        await schoolInput.press('Enter');
         await page.waitForTimeout(2000);
-        await page.locator('li[role="option"], .school-result').first().click({ timeout: 30000 });
+
+        // Fallback: If still on the selection page, try clicking the text directly
+        if (page.url().includes('selectschool')) {
+            const textOption = page.locator(`text="${schoolName}"`).first();
+            if (await textOption.isVisible().catch(() => false)) {
+                await textOption.click({ timeout: 15000, force: true });
+            } else {
+                // Last resort: look for any clickable item containing the name
+                await page.locator('li, .list-item, div[role="button"]').filter({ hasText: schoolName }).first().click({ timeout: 15000, force: true });
+            }
+        }
 
         await page.waitForURL(/oauth2\/auth/, { timeout: 90000 });
         await page.waitForSelector('input[name="username"]', { timeout: 60000 });
