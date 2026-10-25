@@ -5,15 +5,14 @@ import stealth from 'puppeteer-extra-plugin-stealth';
 chromium.use(stealth());
 
 export async function getSparxSession(username, password, schoolName, onProgress = () => {}) {
-    // Headed mode + persistent context saves the cf_clearance cookie, so you only solve once.
+    // Force headless: true. Headed mode requires Xvfb which is not installed on the host.
     const browser = await chromium.launchPersistentContext('./sparx-profile', {
-        headless: false,
+        headless: true,
         args: [
             '--disable-blink-features=AutomationControlled',
             '--disable-gpu',
             '--disable-dev-shm-usage',
-            '--no-sandbox',
-            '--window-size=1280,800'
+            '--no-sandbox'
         ]
     });
 
