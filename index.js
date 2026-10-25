@@ -15,14 +15,6 @@ const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBit
 const sessions = new Map();
 const timeSettings = new Map();
 
-function progressEmbed(steps, current) {
-    const bar = steps.map((s, i) => i <= current ? '🟦' : '⬜').join('');
-    return new EmbedBuilder()
-        .setTitle('Rise Ai — Login Progress')
-        .setDescription(`\`${bar}\`\n**${steps[current]}**`)
-        .setColor(0x5865F2);
-}
-
 function queueEmbed(userId) {
     const stats = queue.getStats();
     const userJobs = queue.getUserJobs(userId).filter(j => ['queued', 'running', 'paused'].includes(j.status));
@@ -37,35 +29,55 @@ function queueEmbed(userId) {
             { name: '❌ Failed', value: `${stats.failed}`, inline: true }
         );
 
-    if (userJobs.length === 0) embed.setDescription('You have no active jobs.');
-    else embed.setDescription(userJobs.map(j => {
-        const pos = j.status === 'queued' ? ` (position ${queue.getPosition(j.id)})` : '';
-        return `• **${j.pkgName}** — ${j.status}${pos}`;
-    }).join('\n'));
+    if (userJobs.length === 0) {
+        embed.setDescription('You have no active jobs.');
+    } else {
+        embed.setDescription(userJobs.map(j => {
+            const pos = j.status === 'queued' ? ` (position ${queue.getPosition(j.id)})` : '';
+            return `• **${j.pkgName}** — ${j.status}${pos}`;
+        }).join('\n'));
+    }
     return embed;
 }
 
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}`);
 
+    // Initialize the queue system with the solver
     await queue.init(async (job) => {
         const session = sessions.get(job.userId);
-        if (!session) throw new Error('Session expired.');
+        if (!session) throw new Error('Session expired. Please log in again.');
         const dm = await client.users.fetch(job.userId).then(u => u.createDM());
         const solver = new HomeworkSolver(session.sparx, job, dm);
         await solver.start();
     });
 
+    // DM Notifications
     queue.on('job:started', async job => {
-        try { const u = await client.users.fetch(job.userId); const dm = await u.createDM(); await dm.send(`▶️ Job **${job.pkgName}** started.`); } catch {}
+        try { 
+            const u = await client.users.fetch(job.userId); 
+            const dm = await u.createDM(); 
+            await dm.send(`▶️ Your job **${job.pkgName}** is now running.`); 
+        } catch {}
     });
+    
     queue.on('job:completed', async job => {
-        try { const u = await client.users.fetch(job.userId); const dm = await u.createDM(); await dm.send(`✅ Job **${job.pkgName}** complete: ${job.progress.done}/${job.progress.total}.`); } catch {}
+        try { 
+            const u = await client.users.fetch(job.userId); 
+            const dm = await u.createDM(); 
+            await dm.send(`✅ Your job **${job.pkgName}** completed: ${job.progress.done}/${job.progress.total}.`); 
+        } catch {}
     });
+    
     queue.on('job:failed', async job => {
-        try { const u = await client.users.fetch(job.userId); const dm = await u.createDM(); await dm.send(`❌ Job **${job.pkgName}** failed: ${job.error}`); } catch {}
+        try { 
+            const u = await client.users.fetch(job.userId); 
+            const dm = await u.createDM(); 
+            await dm.send(`❌ Your job **${job.pkgName}** failed: ${job.error}`); 
+        } catch {}
     });
 
+    // Post Main Panel
     const channel = client.channels.cache.get(process.env.PANEL_CHANNEL_ID);
     if (!channel) return console.warn('Panel channel missing.');
 
@@ -138,25 +150,24 @@ client.on('interactionCreate', async interaction => {
             const username = interaction.fields.getTextInputValue('username');
             const password = interaction.fields.getTextInputValue('password');
 
-            const steps = ['Launching browser', 'Selecting school', 'Logging in', 'Extracting tokens', 'Scraping dashboard'];
-            let step = 0;
-            await interaction.reply({ embeds: [progressEmbed(steps, step)], ephemeral: true });
+            await interaction.reply({ content: 'Starting login process...', ephemeral: true });
             const msg = await interaction.fetchReply();
 
-            const interval = setInterval(async () => {
-                step = Math.min(step + 1, steps.length - 1);
-                await msg.edit({ embeds: [progressEmbed(steps, step)] }).catch(() => {});
-            }, 5000);
+            let lastUpdate = 0;
+            const onProgress = async (status) => {
+                const now = Date.now();
+                // Throttle edits to avoid Discord API rate limits (1 per 1.5s)
+                if (now - lastUpdate < 1500 && !status.includes('complete') && !status.includes('failed')) return;
+                lastUpdate = now;
+                await msg.edit({ content: `**Rise Ai — Login Status**\n> ${status}` }).catch(() => {});
+            };
 
             try {
-                const session = await getSparxSession(username, password, school);
-                clearInterval(interval);
-                await msg.edit({ embeds: [progressEmbed(steps, 4)] });
-
+                const session = await getSparxSession(username, password, school, onProgress);
                 const sparx = new SparxClient(session.token, session.cfClearance);
                 sessions.set(interaction.user.id, { sparx, homeworks: session.homeworks });
 
-                if (session.homeworks.length === 0) throw new Error('No homework found.');
+                if (session.homeworks.length === 0) throw new Error('No homework found on dashboard.');
 
                 const selectEmbed = new EmbedBuilder().setTitle('Select Homework').setColor(0x57F287);
                 const selectRow = new ActionRowBuilder().addComponents(
@@ -172,9 +183,9 @@ client.on('interactionCreate', async interaction => {
                 const timeBtn = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('time').setLabel('Time Settings').setStyle(ButtonStyle.Secondary)
                 );
+                
                 await interaction.editReply({ content: 'Authenticated!', embeds: [selectEmbed], components: [selectRow, timeBtn] });
             } catch (err) {
-                clearInterval(interval);
                 await interaction.editReply({ content: `Login failed: ${err.message}` });
             }
         }
