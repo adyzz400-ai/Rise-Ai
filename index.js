@@ -156,7 +156,6 @@ client.on('interactionCreate', async interaction => {
             let lastUpdate = 0;
             const onProgress = async (status) => {
                 const now = Date.now();
-                // Throttle edits to avoid Discord API rate limits (1 per 1.5s)
                 if (now - lastUpdate < 1500 && !status.includes('complete') && !status.includes('failed')) return;
                 lastUpdate = now;
                 await msg.edit({ content: `**Rise Ai — Login Status**\n> ${status}` }).catch(() => {});
@@ -186,7 +185,7 @@ client.on('interactionCreate', async interaction => {
                 
                 await interaction.editReply({ content: 'Authenticated!', embeds: [selectEmbed], components: [selectRow, timeBtn] });
             } catch (err) {
-                // TRUNCATE ERROR: Discord rejects content > 2000 chars.
+                // CRITICAL FIX: Truncates massive Playwright error logs to fit Discord's 2000-char limit
                 const errorMsg = `Login failed: ${err.message}`.substring(0, 1900);
                 await interaction.editReply({ content: errorMsg }).catch(() => {});
             }
