@@ -5,7 +5,7 @@ import stealth from 'puppeteer-extra-plugin-stealth';
 chromium.use(stealth());
 
 export async function getSparxSession(username, password, schoolName, onProgress = () => {}) {
-    // Force headless: true. Headed mode requires Xvfb which is not installed on the host.
+    // Headless mode is required for Linux servers without a display (Xvfb)
     const browser = await chromium.launchPersistentContext('./sparx-profile', {
         headless: true,
         args: [
@@ -58,7 +58,6 @@ export async function getSparxSession(username, password, schoolName, onProgress
 
         onProgress('Solving Cloudflare / logging in...');
         
-        // POLLING LOOP: Do not wait for navigation. Poll for the token or dashboard URL.
         let bearerToken = null;
         let cfClearance = null;
         const startTime = Date.now();
@@ -88,14 +87,13 @@ export async function getSparxSession(username, password, schoolName, onProgress
                 }
             }
 
-            // If we have the token but the URL isn't the dashboard yet, navigate directly.
             if (bearerToken && !isDashboard) {
                 onProgress('Navigating to homework dashboard...');
                 await page.goto('https://maths.sparx-learning.com/student/homework?pkg_type=homework', {
                     waitUntil: 'commit',
                     timeout: 90000
                 });
-                await page.waitForTimeout(5000); // Give React time to render
+                await page.waitForTimeout(5000);
             }
 
             await page.waitForTimeout(3000);
@@ -103,18 +101,16 @@ export async function getSparxSession(username, password, schoolName, onProgress
         }
 
         if (!bearerToken || !cfClearance) {
-            throw new Error('Cloudflare challenge did not clear. Try restarting the bot or using a residential proxy.');
+            throw new Error('Cloudflare challenge did not clear. Try restarting the bot.');
         }
 
         onProgress('Scraping homework dashboard...');
-        // Ensure we are on the dashboard before scraping
         if (!page.url().includes('/student/homework')) {
             await page.goto('https://maths.sparx-learning.com/student/homework?pkg_type=homework', {
                 waitUntil: 'commit',
                 timeout: 90000
             });
         }
-        // Wait for the homework links to appear
         await page.waitForSelector('a[href*="pkg_id="]', { timeout: 60000 }).catch(() => {});
 
         const homeworks = await page.evaluate(() => {
