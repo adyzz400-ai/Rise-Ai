@@ -7,7 +7,6 @@ const { handleJoinQueueSubmit } = require('./handlers/modals');
 const { log } = require('./logger');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
-let mainMenuMsgId = null;
 
 client.once(Events.ClientReady, async () => {
     log('INFO', `Rise AI Online as ${client.user.tag}`);
@@ -16,17 +15,31 @@ client.once(Events.ClientReady, async () => {
 });
 
 async function postMainMenu(channel) {
-    if (mainMenuMsgId) {
-        try {
-            const old = await channel.messages.fetch(mainMenuMsgId);
-            await old.delete();
+    try {
+        // 1. Fetch the last 10 messages in the channel
+        const messages = await channel.messages.fetch({ limit: 10 });
+        
+        // 2. Find any message sent by THIS bot with the title "Rise AI Tutoring Platform"
+        const oldMessages = messages.filter(m => 
+            m.author.id === client.user.id && 
+            m.embeds.length > 0 && 
+            m.embeds[0].title === 'Rise AI Tutoring Platform'
+        );
+
+        // 3. Delete all old main menus found
+        for (const msg of oldMessages.values()) {
+            await msg.delete().catch(() => {});
             log('INFO', 'Deleted old main menu message');
-        } catch (e) { log('WARN', 'Old main menu not found'); }
+        }
+
+        // 4. Post the fresh main menu
+        const { embed, components } = getMainMenu();
+        await channel.send({ embeds: [embed], components });
+        log('INFO', 'Posted new main menu');
+        
+    } catch (error) {
+        log('ERROR', 'Failed to post main menu', { error: error.message });
     }
-    const { embed, components } = getMainMenu();
-    const msg = await channel.send({ embeds: [embed], components });
-    mainMenuMsgId = msg.id;
-    log('INFO', 'Posted new main menu');
 }
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -46,7 +59,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     } catch (error) {
         log('ERROR', 'Unhandled interaction error', { error: error.message, customId: interaction.customId });
         if (!interaction.replied && !interaction.deferred) {
-            await interaction.reply({ content: '❌ An error occurred.', ephemeral: true }).catch(() => {});
+            await interaction.reply({ content: '❌ An error occurred.', flags: [require('discord.js').MessageFlags.Ephemeral] }).catch(() => {});
         }
     }
 });
