@@ -4,9 +4,21 @@ chromium.use(StealthPlugin());
 const { solveQuestion } = require('./solver');
 const { log } = require('./logger');
 
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
 async function fastLoginAndFetch(username, password, schoolName, onProgress) {
-    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
-    const page = await browser.newPage();
+    const browser = await chromium.launch({ 
+        headless: true, 
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox', 
+            '--disable-blink-features=AutomationControlled'
+        ] 
+    });
+    const context = await browser.newContext({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    });
+    const page = await context.newPage();
     
     try {
         // Stage 1: Navigate to school selector
@@ -20,43 +32,65 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         // Stage 2: Search for school
         if (onProgress) await onProgress(1);
         log('INFO', 'Stage 2: Searching for school');
-        const searchInput = await page.waitForSelector('input[placeholder*="typing"], input[placeholder*="school"]', { timeout: 10000 });
-        await searchInput.click();
-        await searchInput.type(schoolName, { delay: 50 });
         
+        // ChurroAI uses this exact class for the school input
+        const schoolInputSel = '._Input_1573n_4, input[placeholder*="typing"], input[placeholder*="school"]';
+        await page.locator(schoolInputSel).first().waitFor({ state: 'visible', timeout: 10000 });
+        await page.locator(schoolInputSel).first().fill(schoolName);
+        log('INFO', 'Filled school name');
+
         // Stage 3: Click school result
         if (onProgress) await onProgress(2);
         log('INFO', 'Stage 3: Clicking school result');
-        await page.waitForTimeout(1000);
+        await delay(1000);
         
-        const schoolOption = await page.$(`text=${schoolName}`);
-        if (schoolOption) {
-            log('INFO', 'Found school result, clicking...');
-            await schoolOption.click();
-        } else {
-            log('INFO', 'School result not found by text, pressing Enter...');
+        // ChurroAI uses this exact class for the dropdown result
+        const schoolResultSel = '._SchoolResult_1h7n6_1, text=' + schoolName;
+        try {
+            await page.locator(schoolResultSel).first().waitFor({ state: 'visible', timeout: 5000 });
+            await page.locator(schoolResultSel).first().click({ force: true });
+            log('INFO', 'Selected school result');
+        } catch (e) {
+            log('INFO', 'School result not found by selector, pressing Enter');
             await page.keyboard.press('Enter');
         }
 
-        // Stage 4: Wait for the login form to appear (MUCH more reliable than waitForURL)
+        // CRITICAL: Click "Continue" button after selecting school
+        log('INFO', 'Clicking Continue button...');
+        try {
+            await page.locator('button:has-text("Continue")').first().click({ force: true, timeout: 5000 });
+            log('INFO', 'Clicked Continue');
+        } catch (e) {
+            log('WARN', 'Continue button not found, proceeding anyway');
+        }
+        await delay(1500);
+
+        // Stage 4: Wait for login form (ChurroAI uses .sm-input)
         if (onProgress) await onProgress(3);
-        log('INFO', 'Stage 4: Waiting for login form to appear...');
-        await page.waitForSelector('#username', { state: 'visible', timeout: 15000 });
-        log('INFO', 'Login form detected.');
+        log('INFO', 'Stage 4: Waiting for login form (.sm-input)');
+        await page.locator('.sm-input').first().waitFor({ state: 'visible', timeout: 15000 });
+        log('INFO', 'Login form detected');
 
         // Stage 5: Enter credentials
         if (onProgress) await onProgress(4);
         log('INFO', 'Stage 5: Entering credentials');
-        await page.fill('#username', username);
-        await page.fill('#password', password);
         
+        const inputs = page.locator('.sm-input');
+        const count = await inputs.count();
+        if (count >= 2) {
+            await inputs.nth(0).fill(username);
+            log('INFO', 'Filled username/email');
+            await inputs.nth(1).fill(password);
+            log('INFO', 'Filled password');
+        } else {
+            throw new Error('Normal login inputs (.sm-input) not found. Count: ' + count);
+        }
+
         // Stage 6: Submit login
         if (onProgress) await onProgress(5);
         log('INFO', 'Stage 6: Submitting login');
-        await Promise.all([
-            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
-            page.click('.login-button').catch(() => {})
-        ]);
+        await page.locator('.sm-button.login-button').first().click({ force: true });
+        await delay(2000);
 
         // Stage 7: Navigate to homework
         if (onProgress) await onProgress(6);
@@ -65,7 +99,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
             waitUntil: 'domcontentloaded', 
             timeout: 15000 
         });
-        await page.waitForTimeout(2000);
+        await delay(2000);
 
         // Extract assignments
         const assignments = await page.evaluate(() => {
@@ -101,11 +135,11 @@ async function runAutomation(account, waitTime, onProgress) {
         if (!assignments) throw new Error('Login failed');
 
         await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' });
-        await page.waitForTimeout(1000);
+        await delay(1000);
         
         const firstTask = await page.$('[class*="HomeworkCard"], [class*="PackageCard"]');
         if (firstTask) await firstTask.click();
-        await page.waitForTimeout(2000);
+        await delay(2000);
 
         let questionNum = 1;
         const totalQuestions = 9;
@@ -130,7 +164,7 @@ async function runAutomation(account, waitTime, onProgress) {
             if (onProgress) await onProgress(questionNum, 1, totalQuestions, 1);
             
             questionNum++;
-            await page.waitForTimeout(waitTime * 1000);
+            await delay(waitTime * 1000);
             
             const isComplete = await page.$('text=Task Complete');
             if (isComplete) break;
