@@ -1,6 +1,6 @@
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder } = require('discord.js');
 
-function getTaskProgressEmbed(task, currentQ, totalQ, currentT, totalT) {
+function getTaskProgressEmbed(task, currentQ, totalQ, currentT, totalT, funFact) {
     const embed = new EmbedBuilder()
         .setColor(0x2D2D2D)
         .setTitle('Rise AI Maths V2')
@@ -11,7 +11,7 @@ function getTaskProgressEmbed(task, currentQ, totalQ, currentT, totalT) {
             { name: 'Time Spent:', value: '0 minutes', inline: true },
             { name: 'Progress:', value: `${currentT - 1}/${totalT} tasks complete`, inline: true }
         )
-        .setFooter({ text: ' Rise AI - Maths automation ' });
+        .setFooter({ text: `Fun Fact: ${funFact || 'Loading...'}` }); // Static fun fact
 
     const r1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('cancel_task').setLabel('Cancel').setStyle(4).setEmoji('❌')
@@ -23,20 +23,10 @@ function getTaskProgressEmbed(task, currentQ, totalQ, currentT, totalT) {
 function buildTaskList(currentT, totalT, currentQ, totalQ) {
     let text = '';
     const maxShow = Math.min(5, totalT);
-    
     for (let i = 1; i <= maxShow; i++) {
-        let pct = 0;
-        if (i < currentT) pct = 100;
-        else if (i === currentT) pct = Math.round((currentQ / totalQ) * 100);
-        
-        const filled = Math.round(pct / 10);
-        const empty = 10 - filled;
-        const bar = '▓'.repeat(filled) + '░'.repeat(empty);
-        
-        text += `${i}. **Task ${i}**\n${bar} \`${pct}%\`\n\n`;
+        let pct = i < currentT ? 100 : (i === currentT ? Math.round((currentQ / totalQ) * 100) : 0);
+        text += `${i}. **Task ${i}**\n${'▓'.repeat(Math.round(pct/10))}${'░'.repeat(10 - Math.round(pct/10))} \`${pct}%\`\n`;
     }
-    
-    if (totalT > 5) text += `\n*...and ${totalT - 5} more tasks hidden.*`;
     return text;
 }
 
