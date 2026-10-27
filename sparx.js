@@ -5,88 +5,62 @@ const { solveQuestion } = require('./solver');
 const { log } = require('./logger');
 
 async function fastLoginAndFetch(username, password, schoolName, onProgress) {
-    const browser = await chromium.launch({ 
-        headless: true, 
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] 
-    });
-    const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        viewport: { width: 1920, height: 1080 }
-    });
-    const page = await context.newPage();
+    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const page = await browser.newPage();
     
     try {
         // Stage 1: Navigate to school selector
-        log('INFO', 'Stage 1: Navigating to school selector');
         if (onProgress) await onProgress(0);
-        
+        log('INFO', 'Stage 1: Navigating to school selector');
         await page.goto('https://selectschool.sparx-learning.com/?app=sparx_maths&forget=1', { 
             waitUntil: 'domcontentloaded', 
             timeout: 15000 
         });
 
         // Stage 2: Search for school
-        log('INFO', 'Stage 2: Searching for school');
         if (onProgress) await onProgress(1);
-        
-        // Wait for the search input to appear
-        const searchInput = await page.waitForSelector('input._Input_hz2wn_4, input[placeholder*="typing"], input[placeholder*="school"]', { timeout: 10000 });
+        log('INFO', 'Stage 2: Searching for school');
+        const searchInput = await page.waitForSelector('input[placeholder*="typing"], input[placeholder*="school"]', { timeout: 10000 });
         await searchInput.click();
         await searchInput.type(schoolName, { delay: 50 });
         
-        // Wait for dropdown results to appear
-        await page.waitForTimeout(1500);
-        
         // Stage 3: Click school result
-        log('INFO', 'Stage 3: Clicking school result');
         if (onProgress) await onProgress(2);
+        log('INFO', 'Stage 3: Clicking school result');
+        await page.waitForTimeout(1000);
         
-        // Try to find and click the school in the dropdown
-        const schoolResult = await page.$(`text=${schoolName}`);
-        if (schoolResult) {
+        const schoolOption = await page.$(`text=${schoolName}`);
+        if (schoolOption) {
             log('INFO', 'Found school result, clicking...');
-            await schoolResult.click();
+            await schoolOption.click();
         } else {
-            log('INFO', 'School result not found, pressing Enter...');
+            log('INFO', 'School result not found by text, pressing Enter...');
             await page.keyboard.press('Enter');
         }
 
-        // Stage 4: Wait for navigation to auth page
-        log('INFO', 'Stage 4: Waiting for auth page navigation...');
+        // Stage 4: Wait for the login form to appear (MUCH more reliable than waitForURL)
         if (onProgress) await onProgress(3);
-        
-        // Wait for the URL to change to the auth domain
-        await page.waitForURL('**auth.sparx-learning.com**', { timeout: 15000 });
-        log('INFO', 'Navigated to auth page');
+        log('INFO', 'Stage 4: Waiting for login form to appear...');
+        await page.waitForSelector('#username', { state: 'visible', timeout: 15000 });
+        log('INFO', 'Login form detected.');
 
-        // Stage 5: Wait for login form and enter credentials
-        log('INFO', 'Stage 5: Waiting for login form...');
+        // Stage 5: Enter credentials
         if (onProgress) await onProgress(4);
-        
-        // Wait for the username field to appear (from your HTML captures)
-        await page.waitForSelector('#username', { timeout: 15000 });
-        log('INFO', 'Login form found');
-
-        // Fill username and password
+        log('INFO', 'Stage 5: Entering credentials');
         await page.fill('#username', username);
         await page.fill('#password', password);
         
         // Stage 6: Submit login
-        log('INFO', 'Stage 6: Submitting login...');
         if (onProgress) await onProgress(5);
-        
-        // Click the login button and wait for navigation
+        log('INFO', 'Stage 6: Submitting login');
         await Promise.all([
-            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
-                log('WARN', 'Navigation timeout - might already be on dashboard');
-            }),
-            page.click('button.login-button, button[type="submit"]').catch(() => {})
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
+            page.click('.login-button').catch(() => {})
         ]);
 
-        // Stage 7: Navigate to homework and fetch
-        log('INFO', 'Stage 7: Fetching homework...');
+        // Stage 7: Navigate to homework
         if (onProgress) await onProgress(6);
-        
+        log('INFO', 'Stage 7: Navigating to homework dashboard');
         await page.goto('https://maths.sparx-learning.com/student/homework', { 
             waitUntil: 'domcontentloaded', 
             timeout: 15000 
