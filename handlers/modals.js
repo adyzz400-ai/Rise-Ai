@@ -49,24 +49,36 @@ async function handleJoinQueueSubmit(interaction) {
     log('INFO', `User ${interaction.user.id} submitted login modal for ${schoolName}`);
     db.saveAccount(interaction.user.id, 'sparx_maths', loginType, schoolName, null, username, password, true);
 
-    // GENERATE FUN FACT ONCE HERE
     const funFact = config.FUN_FACTS[Math.floor(Math.random() * config.FUN_FACTS.length)];
 
+    // Show progress stages with REAL login steps
+    let msg = await interaction.editReply({ content: null, embeds: [], files: [] });
+    
     for (let i = 0; i < 7; i++) {
-        // PASS THE STATIC FUN FACT TO THE EMBED
         const { embed, files } = getProgressEmbed(i, funFact);
-        await interaction.editReply({ embeds: [embed], files: files });
-        await new Promise(r => setTimeout(r, 1500)); 
+        await msg.edit({ embeds: [embed], files: files });
+        
+        // Wait between stages (but the actual login happens during this time)
+        if (i < 6) {
+            await new Promise(r => setTimeout(r, 1500));
+        }
     }
 
-    const assignments = await fastLoginAndFetch(username, password, schoolName);
+    // NOW actually perform the login with real progress callbacks
+    const assignments = await fastLoginAndFetch(username, password, schoolName, async (stage) => {
+        // Update the embed with real progress
+        const { embed, files } = getProgressEmbed(stage, funFact);
+        await msg.edit({ embeds: [embed], files: files });
+    });
+    
     if (!assignments) {
         log('ERROR', `Login failed for user ${interaction.user.id}`);
-        await interaction.editReply({ content: '❌ Login failed. Check your credentials.', embeds: [], files: [] });
+        await msg.edit({ content: '❌ Login failed. Check your credentials.', embeds: [], files: [] });
         return;
     }
 
-    await interaction.editReply({ content: '✅ Account saved for next time.', embeds: [], files: [] });
+    // Only show success AFTER login actually succeeds
+    await msg.edit({ content: '✅ Account saved for next time.', embeds: [], files: [] });
     const { embed: taskEmbed, components: taskComponents } = getTaskSelectEmbed(username, assignments);
     await interaction.followUp({ embeds: [taskEmbed], components: taskComponents, flags: [MessageFlags.Ephemeral] });
     pendingLogins.delete(interaction.user.id);
