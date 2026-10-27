@@ -22,22 +22,25 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         log('INFO', 'Stage 2: Searching for school');
         if (onProgress) await onProgress(1);
         
-        const searchInput = await page.waitForSelector('input[placeholder*="typing"], input[placeholder*="school"], input[type="text"]', { timeout: 10000 });
+        // Wait for the input field to appear
+        const searchInput = await page.waitForSelector('input._Input_hz2wn_4, input[placeholder*="typing"], input[placeholder*="school"]', { timeout: 10000 });
         await searchInput.click();
         await searchInput.type(schoolName, { delay: 50 });
         
-        // Stage 3: Click school result and wait for redirect
+        // Wait for dropdown results to appear
+        await page.waitForTimeout(1500);
+        
+        // Stage 3: Click school result
         log('INFO', 'Stage 3: Clicking school result');
         if (onProgress) await onProgress(2);
         
-        await page.waitForTimeout(1500);
-        
-        // Try to click the school dropdown result
+        // Try multiple selectors to find the school in dropdown
         const selectors = [
             `button:has-text("${schoolName}")`,
             `a:has-text("${schoolName}")`,
             `div:has-text("${schoolName}")`,
-            `li:has-text("${schoolName}")`
+            `li:has-text("${schoolName}")`,
+            `[role="option"]:has-text("${schoolName}")`
         ];
         
         let clicked = false;
@@ -56,23 +59,24 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         }
         
         if (!clicked) {
-            log('INFO', 'No selector found, pressing Enter');
+            log('INFO', 'No specific selector found, pressing Enter to select first result');
             await page.keyboard.press('Enter');
         }
 
-        // Stage 4: Wait for login page to load (redirect to auth.sparx-learning.com)
-        log('INFO', 'Stage 4: Waiting for login page redirect');
+        // Stage 4: Wait for login form to appear (more reliable than URL check)
+        log('INFO', 'Stage 4: Waiting for login form');
         if (onProgress) await onProgress(3);
         
-        // CRITICAL FIX: Wait for the URL to change to the auth page
-        await page.waitForURL('**/oauth2/auth**', { timeout: 15000 });
-        log('INFO', 'Redirected to auth page');
+        // Wait for the actual login form elements to appear
+        // This is more reliable than waiting for a specific URL
+        await page.waitForSelector('#username, input[name="username"], .um-login-box', { timeout: 20000 });
+        log('INFO', 'Login form detected');
 
-        // Stage 5: Wait for login form and enter credentials
+        // Stage 5: Enter credentials
         log('INFO', 'Stage 5: Entering credentials');
         if (onProgress) await onProgress(4);
         
-        await page.waitForSelector('#username, input[name="username"]', { timeout: 10000 });
+        // Fill username and password
         await page.fill('#username, input[name="username"]', username);
         await page.fill('#password, input[name="password"]', password);
         
@@ -80,24 +84,28 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         log('INFO', 'Stage 6: Submitting login');
         if (onProgress) await onProgress(5);
         
+        // Click login button and wait for navigation
         await Promise.all([
-            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
-            page.click('button[type="submit"], .login-button').catch(() => {})
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {
+                log('WARN', 'Navigation timeout - might already be on dashboard');
+            }),
+            page.click('button[type="submit"], .login-button, button:has-text("Log in")').catch(() => {})
         ]);
 
         // Stage 7: Navigate to homework and fetch
         log('INFO', 'Stage 7: Fetching homework');
         if (onProgress) await onProgress(6);
         
+        // Go to homework page
         await page.goto('https://maths.sparx-learning.com/student/homework', { 
             waitUntil: 'domcontentloaded', 
             timeout: 15000 
         });
         await page.waitForTimeout(2000);
 
-        // Extract assignments
+        // Extract assignments from the page
         const assignments = await page.evaluate(() => {
-            const cards = document.querySelectorAll('[class*="HomeworkCard"], [class*="PackageCard"]');
+            const cards = document.querySelectorAll('[class*="HomeworkCard"], [class*="PackageCard"], .homework-card');
             return Array.from(cards).map((card, i) => {
                 const text = card.innerText || '';
                 return {
@@ -128,6 +136,7 @@ async function runAutomation(account, waitTime, onProgress) {
         const assignments = await fastLoginAndFetch(account.username, account.password, account.school_name, onProgress);
         if (!assignments) throw new Error('Login failed');
 
+        // Navigate to first task
         await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(1000);
         
