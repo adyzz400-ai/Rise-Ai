@@ -3,7 +3,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder } = require('discord.js');
 function getTaskProgressEmbed(task, currentQ, totalQ, currentT, totalT, funFact) {
     const embed = new EmbedBuilder()
         .setColor(0x2D2D2D)
-        .setTitle('Rise AI Maths V2')
+        .setTitle('Rise AI Maths V2') // No 'M' here either
         .setDescription(`\`Solving question ${currentQ} of ${totalQ} in Task ${currentT}...\``)
         .addFields(
             { name: 'Maths Homework', value: 'Sparx Maths', inline: false },
@@ -11,10 +11,10 @@ function getTaskProgressEmbed(task, currentQ, totalQ, currentT, totalT, funFact)
             { name: 'Time Spent:', value: '0 minutes', inline: true },
             { name: 'Progress:', value: `${currentT - 1}/${totalT} tasks complete`, inline: true }
         )
-        .setFooter({ text: `Fun Fact: ${funFact || 'Loading...'}` }); // Static fun fact
+        .setFooter({ text: `Fun Fact: ${funFact || 'Loading...'}` }); // Static fact
 
     const r1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('cancel_task').setLabel('Cancel').setStyle(4).setEmoji('❌')
+        new ButtonBuilder().setCustomId('cancel_task').setLabel('Cancel').setStyle(4).setEmoji('')
     );
 
     return { embed, components: [r1] };
