@@ -14,8 +14,8 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(0);
         
         await page.goto('https://selectschool.sparx-learning.com/?app=sparx_maths&forget=1', { 
-            waitUntil: 'networkidle', 
-            timeout: 20000 
+            waitUntil: 'domcontentloaded', 
+            timeout: 15000 
         });
 
         // Stage 2: Search for school
@@ -32,7 +32,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         
         await page.waitForTimeout(1500);
         
-        // Try multiple selectors to find and click the school
+        // Try to click the school dropdown result
         const selectors = [
             `button:has-text("${schoolName}")`,
             `a:has-text("${schoolName}")`,
@@ -46,13 +46,8 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
                 const el = await page.$(selector);
                 if (el) {
                     log('INFO', `Clicking school using selector: ${selector}`);
-                    // CRITICAL: Wait for navigation when clicking the school
-                    await Promise.all([
-                        page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }),
-                        el.click()
-                    ]);
+                    await el.click();
                     clicked = true;
-                    log('INFO', 'School clicked, navigation completed');
                     break;
                 }
             } catch (e) {
@@ -62,24 +57,22 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         
         if (!clicked) {
             log('INFO', 'No selector found, pressing Enter');
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }).catch(() => {}),
-                page.keyboard.press('Enter')
-            ]);
+            await page.keyboard.press('Enter');
         }
 
-        // Stage 4: Wait for login form to appear
-        log('INFO', 'Stage 4: Waiting for login form');
+        // Stage 4: Wait for login page to load (redirect to auth.sparx-learning.com)
+        log('INFO', 'Stage 4: Waiting for login page redirect');
         if (onProgress) await onProgress(3);
         
-        // From your HTML captures, the login form has these exact elements
-        await page.waitForSelector('#username, input[name="username"]', { timeout: 15000 });
-        log('INFO', 'Login form found');
+        // CRITICAL FIX: Wait for the URL to change to the auth page
+        await page.waitForURL('**/oauth2/auth**', { timeout: 15000 });
+        log('INFO', 'Redirected to auth page');
 
-        // Stage 5: Enter credentials
+        // Stage 5: Wait for login form and enter credentials
         log('INFO', 'Stage 5: Entering credentials');
         if (onProgress) await onProgress(4);
         
+        await page.waitForSelector('#username, input[name="username"]', { timeout: 10000 });
         await page.fill('#username, input[name="username"]', username);
         await page.fill('#password, input[name="password"]', password);
         
@@ -88,7 +81,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(5);
         
         await Promise.all([
-            page.waitForNavigation({ waitUntil: 'networkidle', timeout: 15000 }).catch(() => {}),
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
             page.click('button[type="submit"], .login-button').catch(() => {})
         ]);
 
@@ -97,7 +90,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(6);
         
         await page.goto('https://maths.sparx-learning.com/student/homework', { 
-            waitUntil: 'networkidle', 
+            waitUntil: 'domcontentloaded', 
             timeout: 15000 
         });
         await page.waitForTimeout(2000);
@@ -132,10 +125,10 @@ async function runAutomation(account, waitTime, onProgress) {
     const page = await browser.newPage();
     
     try {
-        const assignments = await fastLoginAndFetch(account.username, account.password, account.school_name);
+        const assignments = await fastLoginAndFetch(account.username, account.password, account.school_name, onProgress);
         if (!assignments) throw new Error('Login failed');
 
-        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle' });
+        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(1000);
         
         const firstTask = await page.$('[class*="HomeworkCard"], [class*="PackageCard"]');
@@ -162,7 +155,7 @@ async function runAutomation(account, waitTime, onProgress) {
             const submitBtn = await page.$('button[class*="Submit"], button:has-text("Check")');
             if (submitBtn) await submitBtn.click();
 
-            await onProgress(questionNum, 1, totalQuestions, 1);
+            if (onProgress) await onProgress(questionNum, 1, totalQuestions, 1);
             
             questionNum++;
             await page.waitForTimeout(waitTime * 1000);
