@@ -53,7 +53,6 @@ async function handlePlatformSelect(interaction) {
 }
 
 async function handleJoinQueueSubmit(interaction) {
-    // 1. Defer the reply to give us time to process
     await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
     
     const schoolName = interaction.fields.getTextInputValue('school');
@@ -65,29 +64,25 @@ async function handleJoinQueueSubmit(interaction) {
     log('INFO', `User ${interaction.user.id} submitted login modal for ${schoolName}`);
     db.saveAccount(interaction.user.id, 'sparx_maths', loginType, schoolName, null, username, password, true);
 
-    // 2. Generate ONE fun fact for the whole session
+    // Generate ONE fun fact for the whole session
     const funFact = config.FUN_FACTS[Math.floor(Math.random() * config.FUN_FACTS.length)];
 
-    // 3. Send the FIRST stage immediately to avoid "Empty Message" error
+    // Send the FIRST stage immediately
     const firstStage = getProgressEmbed(0, funFact);
     await interaction.editReply({ 
         embeds: [firstStage.embed], 
         files: firstStage.files || [] 
     });
 
-    // 4. Loop through the remaining 6 stages
-    for (let i = 1; i < 7; i++) {
-        const stage = getProgressEmbed(i, funFact);
+    // Perform the REAL login with progress callbacks
+    const assignments = await fastLoginAndFetch(username, password, schoolName, async (stage) => {
+        // Update the embed with REAL progress
+        const { embed, files } = getProgressEmbed(stage, funFact);
         await interaction.editReply({ 
-            embeds: [stage.embed], 
-            files: stage.files || [] 
+            embeds: [embed], 
+            files: files || [] 
         });
-        // Wait 1.5 seconds between stages for a smooth animation
-        await new Promise(r => setTimeout(r, 1500)); 
-    }
-
-    // 5. Perform the REAL login and fetch homework
-    const assignments = await fastLoginAndFetch(username, password, schoolName);
+    });
     
     if (!assignments) {
         log('ERROR', `Login failed for user ${interaction.user.id}`);
@@ -99,7 +94,7 @@ async function handleJoinQueueSubmit(interaction) {
         return;
     }
 
-    // 6. Success! Show the task selection menu
+    // Success! Show the task selection menu
     await interaction.editReply({ 
         content: '✅ Account saved for next time.', 
         embeds: [], 
