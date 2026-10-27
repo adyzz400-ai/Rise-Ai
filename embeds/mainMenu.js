@@ -3,7 +3,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder } = require('discord.js');
 function getMainMenu() {
     const embed = new EmbedBuilder()
         .setColor(0x5865F2)
-        .setTitle('Rise AI Tutoring Platform')
+        .setTitle('Rise AI')
         .setDescription('Your gateway to personalised homework assistance.\nUse Rise AI to work across multiple study platforms.\nPress **Join Queue** below to connect an account.')
         .addFields({ name: 'Notes', value: '• Get help with homework across supported platforms\n• Start a session or use a saved account\n• Account details are stored securely' })
         .setTimestamp();
