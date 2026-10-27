@@ -1,4 +1,13 @@
-const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder, MessageFlags } = require('discord.js');
+const { 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle, 
+    ActionRowBuilder, 
+    StringSelectMenuBuilder, 
+    EmbedBuilder,
+    MessageFlags 
+} = require('discord.js');
+
 const db = require('../database');
 const config = require('../config');
 const { getProgressEmbed } = require('../embeds/progress');
@@ -9,15 +18,21 @@ const { log } = require('../logger');
 const pendingLogins = new Map();
 
 function getPlatformSelectMessage() {
-    const embed = new EmbedBuilder().setColor(0x5865F2).setTitle('Select Platform & Login Method').setDescription('Choose how you want to login to Sparx Maths.');
+    const embed = new EmbedBuilder()
+        .setColor(0x5865F2)
+        .setTitle('Select Platform & Login Method')
+        .setDescription('Choose how you want to login to Sparx Maths.');
+        
     const select = new StringSelectMenuBuilder()
         .setCustomId('platform_select')
         .setPlaceholder('Select platform and login method')
         .addOptions(config.PLATFORMS.map(p => ({
             label: p.label,
-            description: p.value === 'sparx_normal' ? 'Direct username/password login' : p.value === 'sparx_microsoft' ? 'Login with Microsoft/Office 365' : 'Login with Google account',
+            description: p.value === 'sparx_normal' ? 'Direct username/password login' : 
+                       p.value === 'sparx_microsoft' ? 'Login with Microsoft/Office 365' : 'Login with Google account',
             value: p.value
         })));
+        
     return { embed, components: [new ActionRowBuilder().addComponents(select)] };
 }
 
@@ -38,6 +53,7 @@ async function handlePlatformSelect(interaction) {
 }
 
 async function handleJoinQueueSubmit(interaction) {
+    // 1. Defer the reply to give us time to process
     await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
     
     const schoolName = interaction.fields.getTextInputValue('school');
@@ -49,39 +65,60 @@ async function handleJoinQueueSubmit(interaction) {
     log('INFO', `User ${interaction.user.id} submitted login modal for ${schoolName}`);
     db.saveAccount(interaction.user.id, 'sparx_maths', loginType, schoolName, null, username, password, true);
 
+    // 2. Generate ONE fun fact for the whole session
     const funFact = config.FUN_FACTS[Math.floor(Math.random() * config.FUN_FACTS.length)];
 
-    // Show progress stages with REAL login steps
-    let msg = await interaction.editReply({ content: null, embeds: [], files: [] });
-    
-    for (let i = 0; i < 7; i++) {
-        const { embed, files } = getProgressEmbed(i, funFact);
-        await msg.edit({ embeds: [embed], files: files });
-        
-        // Wait between stages (but the actual login happens during this time)
-        if (i < 6) {
-            await new Promise(r => setTimeout(r, 1500));
-        }
+    // 3. Send the FIRST stage immediately to avoid "Empty Message" error
+    const firstStage = getProgressEmbed(0, funFact);
+    await interaction.editReply({ 
+        embeds: [firstStage.embed], 
+        files: firstStage.files || [] 
+    });
+
+    // 4. Loop through the remaining 6 stages
+    for (let i = 1; i < 7; i++) {
+        const stage = getProgressEmbed(i, funFact);
+        await interaction.editReply({ 
+            embeds: [stage.embed], 
+            files: stage.files || [] 
+        });
+        // Wait 1.5 seconds between stages for a smooth animation
+        await new Promise(r => setTimeout(r, 1500)); 
     }
 
-    // NOW actually perform the login with real progress callbacks
-    const assignments = await fastLoginAndFetch(username, password, schoolName, async (stage) => {
-        // Update the embed with real progress
-        const { embed, files } = getProgressEmbed(stage, funFact);
-        await msg.edit({ embeds: [embed], files: files });
-    });
+    // 5. Perform the REAL login and fetch homework
+    const assignments = await fastLoginAndFetch(username, password, schoolName);
     
     if (!assignments) {
         log('ERROR', `Login failed for user ${interaction.user.id}`);
-        await msg.edit({ content: '❌ Login failed. Check your credentials.', embeds: [], files: [] });
+        await interaction.editReply({ 
+            content: '❌ Login failed. Check your credentials.', 
+            embeds: [], 
+            files: [] 
+        });
         return;
     }
 
-    // Only show success AFTER login actually succeeds
-    await msg.edit({ content: '✅ Account saved for next time.', embeds: [], files: [] });
+    // 6. Success! Show the task selection menu
+    await interaction.editReply({ 
+        content: '✅ Account saved for next time.', 
+        embeds: [], 
+        files: [] 
+    });
+    
     const { embed: taskEmbed, components: taskComponents } = getTaskSelectEmbed(username, assignments);
-    await interaction.followUp({ embeds: [taskEmbed], components: taskComponents, flags: [MessageFlags.Ephemeral] });
+    await interaction.followUp({ 
+        embeds: [taskEmbed], 
+        components: taskComponents, 
+        flags: [MessageFlags.Ephemeral] 
+    });
+    
     pendingLogins.delete(interaction.user.id);
 }
 
-module.exports = { getPlatformSelectMessage, getJoinQueueModal, handlePlatformSelect, handleJoinQueueSubmit };
+module.exports = { 
+    getPlatformSelectMessage, 
+    getJoinQueueModal, 
+    handlePlatformSelect, 
+    handleJoinQueueSubmit 
+};
