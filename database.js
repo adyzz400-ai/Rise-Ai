@@ -1,36 +1,106 @@
-const Database = require('better-sqlite3');
-const db = new Database('riseai.db');
+const fs = require('fs');
+const path = require('path');
 const { log } = require('./logger');
 
-db.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-        discord_id TEXT, platform TEXT, login_type TEXT, school_name TEXT, school_id TEXT, username TEXT, password TEXT, is_saved INTEGER DEFAULT 0,
-        PRIMARY KEY (discord_id, platform, username)
-    );
-    CREATE TABLE IF NOT EXISTS settings (
-        discord_id TEXT PRIMARY KEY, timing_mode TEXT DEFAULT 'cautious', custom_seconds INTEGER DEFAULT 40
-    );
-    CREATE TABLE IF NOT EXISTS tasks (
-        discord_id TEXT PRIMARY KEY, package_id TEXT, task_id TEXT, assignment_name TEXT, total_questions INTEGER, current_question INTEGER DEFAULT 0, total_tasks INTEGER, current_task INTEGER DEFAULT 1, message_id TEXT, channel_id TEXT
-    );
-`);
+const dbPath = path.join(__dirname, 'riseai.json');
+
+// Initialize database file if it doesn't exist
+if (!fs.existsSync(dbPath)) {
+    fs.writeFileSync(dbPath, JSON.stringify({
+        accounts: [],
+        settings: {},
+        tasks: {}
+    }, null, 2));
+}
+
+function readDb() {
+    try {
+        const data = fs.readFileSync(dbPath, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        log('ERROR', 'Failed to read database', { error: error.message });
+        return { accounts: [], settings: {}, tasks: {} };
+    }
+}
+
+function writeDb(data) {
+    try {
+        fs.writeFileSync(dbPath, JSON.stringify(data, null, 2));
+    } catch (error) {
+        log('ERROR', 'Failed to write database', { error: error.message });
+    }
+}
 
 module.exports = {
     saveAccount: (discordId, platform, loginType, schoolName, schoolId, username, password, isSaved) => {
         log('INFO', `Saving account for user ${discordId}`, { platform, schoolName });
-        db.prepare(`INSERT OR REPLACE INTO accounts VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(discordId, platform, loginType, schoolName, schoolId, username, password, isSaved ? 1 : 0);
+        const db = readDb();
+        // Remove existing account for this user/platform/username to avoid duplicates
+        db.accounts = db.accounts.filter(a => !(a.discord_id === discordId && a.platform === platform && a.username === username));
+        db.accounts.push({ 
+            discord_id: discordId, 
+            platform, 
+            login_type: loginType, 
+            school_name: schoolName, 
+            school_id: schoolId, 
+            username, 
+            password, 
+            is_saved: isSaved ? 1 : 0 
+        });
+        writeDb(db);
     },
-    getSavedAccounts: (discordId, platform) => db.prepare(`SELECT * FROM accounts WHERE discord_id = ? AND platform = ? AND is_saved = 1`).all(discordId, platform),
-    getSettings: (discordId) => db.prepare(`SELECT * FROM settings WHERE discord_id = ?`).get(discordId) || { timing_mode: 'cautious', custom_seconds: 40 },
-    updateSettings: (discordId, mode, seconds) => db.prepare(`INSERT OR REPLACE INTO settings VALUES (?, ?, ?)`).run(discordId, mode, seconds),
+    
+    getSavedAccounts: (discordId, platform) => {
+        const db = readDb();
+        return db.accounts.filter(a => a.discord_id === discordId && a.platform === platform && a.is_saved === 1);
+    },
+    
+    getSettings: (discordId) => {
+        const db = readDb();
+        return db.settings[discordId] || { timing_mode: 'cautious', custom_seconds: 40 };
+    },
+    
+    updateSettings: (discordId, mode, seconds) => {
+        const db = readDb();
+        db.settings[discordId] = { timing_mode: mode, custom_seconds: seconds };
+        writeDb(db);
+    },
+    
     saveTask: (discordId, pkgId, taskId, name, totalQ, totalT, msgId, chId) => {
         log('INFO', `Saving task for user ${discordId}`, { name, totalQ, totalT });
-        db.prepare(`INSERT OR REPLACE INTO tasks VALUES (?, ?, ?, ?, ?, 0, ?, 1, ?, ?)`).run(discordId, pkgId, taskId, name, totalQ, totalT, msgId, chId);
+        const db = readDb();
+        db.tasks[discordId] = {
+            package_id: pkgId, 
+            task_id: taskId, 
+            assignment_name: name,
+            total_questions: totalQ, 
+            current_question: 0, 
+            total_tasks: totalT, 
+            current_task: 1,
+            message_id: msgId, 
+            channel_id: chId
+        };
+        writeDb(db);
     },
-    getTask: (discordId) => db.prepare(`SELECT * FROM tasks WHERE discord_id = ?`).get(discordId),
-    updateTaskProgress: (discordId, currentQ, currentT) => db.prepare(`UPDATE tasks SET current_question = ?, current_task = ? WHERE discord_id = ?`).run(currentQ, currentT, discordId),
+    
+    getTask: (discordId) => {
+        const db = readDb();
+        return db.tasks[discordId] || null;
+    },
+    
+    updateTaskProgress: (discordId, currentQ, currentT) => {
+        const db = readDb();
+        if (db.tasks[discordId]) {
+            db.tasks[discordId].current_question = currentQ;
+            db.tasks[discordId].current_task = currentT;
+            writeDb(db);
+        }
+    },
+    
     deleteTask: (discordId) => {
         log('INFO', `Deleting task for user ${discordId}`);
-        db.prepare(`DELETE FROM tasks WHERE discord_id = ?`).run(discordId);
+        const db = readDb();
+        delete db.tasks[discordId];
+        writeDb(db);
     }
 };
