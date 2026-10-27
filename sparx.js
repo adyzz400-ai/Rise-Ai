@@ -11,10 +11,7 @@ async function fastLoginAndFetch(username, password, schoolName) {
     
     try {
         // 1. Go to School Selector
-        await page.goto('https://selectschool.sparx-learning.com/?app=sparx_maths&forget=1', { 
-            waitUntil: 'domcontentloaded', 
-            timeout: 15000 
-        });
+        await page.goto('https://selectschool.sparx-learning.com/?app=sparx_maths&forget=1', { waitUntil: 'domcontentloaded', timeout: 15000 });
 
         // 2. Type School Name
         log('INFO', `Searching for school: ${schoolName}`);
@@ -22,19 +19,15 @@ async function fastLoginAndFetch(username, password, schoolName) {
         await searchInput.click();
         await searchInput.type(schoolName, { delay: 50 });
         
-        // 3. Wait for dropdown to appear and click the first result
+        // 3. Click the Result
         log('INFO', 'Waiting for school dropdown results...');
         await page.waitForTimeout(1500);
         
-        // Try multiple selectors to find the dropdown result
         const selectors = [
             `button:has-text("${schoolName}")`,
             `a:has-text("${schoolName}")`,
             `div:has-text("${schoolName}")`,
-            `li:has-text("${schoolName}")`,
-            `[role="option"]:has-text("${schoolName}")`,
-            `.school-result`,
-            `.dropdown-item`
+            `li:has-text("${schoolName}")`
         ];
         
         let clicked = false;
@@ -43,50 +36,39 @@ async function fastLoginAndFetch(username, password, schoolName) {
                 const element = await page.$(selector);
                 if (element) {
                     await element.click();
-                    log('INFO', `Clicked school result using selector: ${selector}`);
+                    log('INFO', `Clicked school result.`);
                     clicked = true;
                     break;
                 }
-            } catch (e) {
-                // Try next selector
-            }
+            } catch (e) { /* Try next */ }
         }
+        if (!clicked) await page.keyboard.press('Enter');
         
-        if (!clicked) {
-            // Fallback: Press Enter to select first result
-            log('INFO', 'No specific selector found, pressing Enter to select first result');
-            await page.keyboard.press('Enter');
-        }
-        
-        // 4. Wait for login form to appear
-        log('INFO', 'Waiting for login form...');
-        await page.waitForSelector('input[name="username"], #username, input[type="email"]', { timeout: 15000 });
-        log('INFO', 'Login form found.');
+        // 4. CRITICAL FIX: Wait for the actual Login Page to load
+        // We wait for the specific login container class found in your devtool captures
+        log('INFO', 'Waiting for login page to load...');
+        await page.waitForSelector('.um-login-box, #login-form', { timeout: 15000 });
+        log('INFO', 'Login page loaded. Finding inputs...');
 
         // 5. Enter Credentials
-        const usernameInput = await page.$('input[name="username"], #username, input[type="email"]');
-        const passwordInput = await page.$('input[name="password"], #password, input[type="password"]');
-        
-        if (usernameInput) await usernameInput.fill(username);
-        if (passwordInput) await passwordInput.fill(password);
+        await page.waitForSelector('#username, input[name="username"]', { timeout: 5000 });
+        await page.fill('#username, input[name="username"]', username);
+        await page.fill('#password, input[name="password"]', password);
         
         // 6. Click Login
         await Promise.all([
             page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {}),
-            page.click('button[type="submit"], .login-button, button:has-text("Log in")').catch(() => {})
+            page.click('button[type="submit"], .login-button').catch(() => {})
         ]);
 
         // 7. Navigate to Homework
         log('INFO', 'Navigating to homework dashboard...');
-        await page.goto('https://maths.sparx-learning.com/student/homework', { 
-            waitUntil: 'domcontentloaded', 
-            timeout: 15000 
-        });
+        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
         await page.waitForTimeout(2000);
 
         // 8. Extract Assignments
         const assignments = await page.evaluate(() => {
-            const cards = document.querySelectorAll('[class*="HomeworkCard"], [class*="PackageCard"], .homework-card, [data-testid*="homework"]');
+            const cards = document.querySelectorAll('[class*="HomeworkCard"], [class*="PackageCard"]');
             return Array.from(cards).map((card, i) => {
                 const text = card.innerText || '';
                 return {
@@ -114,11 +96,9 @@ async function runAutomation(account, waitTime, onProgress) {
     const page = await browser.newPage();
     
     try {
-        // Login first
         const assignments = await fastLoginAndFetch(account.username, account.password, account.school_name);
         if (!assignments) throw new Error('Login failed');
 
-        // Navigate to first task
         await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' });
         await page.waitForTimeout(1000);
         
@@ -126,7 +106,6 @@ async function runAutomation(account, waitTime, onProgress) {
         if (firstTask) await firstTask.click();
         await page.waitForTimeout(2000);
 
-        // Solve Loop
         let questionNum = 1;
         const totalQuestions = 9;
         
@@ -155,7 +134,6 @@ async function runAutomation(account, waitTime, onProgress) {
             const isComplete = await page.$('text=Task Complete');
             if (isComplete) break;
         }
-        
         log('INFO', 'Automation finished');
     } catch (error) {
         log('ERROR', 'Automation error', { error: error.message });
