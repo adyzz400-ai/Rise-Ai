@@ -62,7 +62,6 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
             await inputs.nth(1).fill(password);
             log('INFO', 'Filled password');
             
-            // CRITICAL: Press Enter on the password field to submit the form reliably
             await inputs.nth(1).press('Enter');
             log('INFO', 'Pressed Enter to submit form');
         } else {
@@ -72,12 +71,10 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(5);
         log('INFO', 'Stage 6: Waiting for login redirect...');
         
-        // Wait for the URL to change away from the auth page
         await delay(5000);
         const currentUrl = page.url();
         log('INFO', `Current URL after login attempt: ${currentUrl}`);
 
-        // If we are still on the auth or selectschool page, the login was rejected
         if (currentUrl.includes('auth.sparx-learning.com') || currentUrl.includes('selectschool')) {
             const errorText = await page.$eval('.sm-error, .error-message, [class*="error"], [class*="alert"]', el => el.innerText).catch(() => 'No specific error message found');
             throw new Error(`INVALID_CREDENTIALS: ${errorText}`);
@@ -86,7 +83,6 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
         
-        // RESILIENT NAVIGATION: Catch ERR_ABORTED and proceed anyway
         try {
             await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
         } catch (navError) {
@@ -98,8 +94,14 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
             }
         }
         
-        log('INFO', 'Waiting for homework cards to render...');
-        await delay(3000); 
+        log('INFO', 'Waiting for homework dashboard to fully load...');
+        // CRITICAL FIX: Increased delay to 8 seconds to allow React to fetch and render homework data
+        await delay(8000); 
+        
+        // Also try to wait for the actual homework list container to become visible
+        await page.waitForSelector('[class*="HomeworkCard"], [class*="PackageCard"], .homework-list', { state: 'visible', timeout: 10000 }).catch(() => {
+            log('WARN', 'Homework container not found, proceeding with scrape anyway...');
+        });
 
         const assignments = await page.evaluate(() => {
             const selectors = [
