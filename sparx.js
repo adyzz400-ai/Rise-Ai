@@ -83,7 +83,6 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
         
-        // CRITICAL FIX: Use 'networkidle' to wait for React API calls to finish
         try {
             await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle', timeout: 30000 });
         } catch (navError) {
@@ -92,35 +91,37 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         }
         
         log('INFO', 'Waiting for homework dashboard to fully render...');
-        await page.waitForSelector('[class*="HomeworkCard"], [class*="PackageCard"], .homework-list, text="Independent Learning"', { state: 'visible', timeout: 15000 }).catch(() => {
-            log('WARN', 'Homework container not found within 15s, proceeding with scrape anyway...');
+        await page.waitForSelector('text="Homework"', { state: 'visible', timeout: 15000 }).catch(() => {
+            log('WARN', 'Homework text not found within 15s, proceeding with scrape anyway...');
         });
 
+        // RESILIENT SCRAPER: Looks for any element containing "Homework" and "due"
         const assignments = await page.evaluate(() => {
-            const selectors = [
-                '[class*="HomeworkCard"]',
-                '[class*="PackageCard"]',
-                '.homework-card',
-                '[data-testid*="homework"]',
-                'a[href*="/student/package/"]'
-            ];
+            const allElements = Array.from(document.querySelectorAll('*'));
             
-            let cards = [];
-            for (const sel of selectors) {
-                cards = document.querySelectorAll(sel);
-                if (cards.length > 0) break;
+            // Find elements that contain both "Homework" and "due" (case-insensitive)
+            const homeworkElements = allElements.filter(el => {
+                const text = el.innerText.toLowerCase();
+                return text.includes('homework') && text.includes('due') && el.children.length < 15; 
+            });
+
+            // Deduplicate: keep only the most specific (smallest) containers
+            const uniqueCards = [];
+            for (const el of homeworkElements) {
+                if (!uniqueCards.some(c => c.contains(el) && c !== el)) {
+                    uniqueCards.push(el);
+                }
             }
 
-            return Array.from(cards).map((card, i) => {
-                const text = card.innerText || card.textContent || '';
-                const cleanText = text.replace(/\s+/g, ' ').trim();
+            return uniqueCards.slice(0, 10).map((card, i) => {
+                const text = card.innerText.replace(/\s+/g, ' ').trim();
                 return {
                     id: `pkg_${i}_${Date.now()}`,
-                    name: cleanText.split('Due')[0].split('Complete')[0].trim() || `Homework ${i + 1}`,
-                    dueText: cleanText.match(/due\s+(.+?)(?:\s+at|\s+by|\.|$)/i)?.[1]?.trim() || 'Unknown',
-                    percentComplete: parseInt(cleanText.match(/(\d+)%/)?.[1] || 0)
+                    name: text.split(/due/i)[0].trim() || `Homework ${i + 1}`,
+                    dueText: text.match(/due\s+(.+?)(?:\s+at|\s+by|\.|$)/i)?.[1]?.trim() || 'Unknown',
+                    percentComplete: parseInt(text.match(/(\d+)%/)?.[1] || 0)
                 };
-            }).filter(a => a.name.length > 0);
+            });
         });
 
         log('INFO', `Successfully fetched ${assignments.length} assignments`);
@@ -150,8 +151,19 @@ async function runAutomation(account, waitTime, onProgress) {
         await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle' }).catch(() => {});
         await delay(1000);
         
-        const firstTask = await page.$('[class*="HomeworkCard"], [class*="PackageCard"]');
-        if (firstTask) await firstTask.click();
+        // Click the first homework card found by our resilient scraper logic
+        const firstTask = await page.$('text="Homework"');
+        if (firstTask) {
+            // Find the parent card to click
+            const card = await firstTask.evaluateHandle(el => {
+                let parent = el.parentElement;
+                while (parent && parent.children.length > 15) {
+                    parent = parent.parentElement;
+                }
+                return parent || el;
+            });
+            await card.click();
+        }
         await delay(2000);
 
         let questionNum = 1;
