@@ -7,43 +7,20 @@ const { log } = require('./logger');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fastLoginAndFetch(username, password, schoolName, onProgress) {
-    // Use ChurroAI's exact launch arguments for maximum stealth
     const browser = await chromium.launch({ 
         headless: true, 
         args: [
             '--no-sandbox',
             '--disable-setuid-sandbox',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--ignore-certificate-errors',
-            '--disable-blink-features=AutomationControlled',
-            '--disable-features=IsolateOrigins,site-per-process',
-            '--ignore-certificate-errors-spki-list'
+            '--disable-dev-shm-usage', // CRITICAL: Prevents page crashes on low-memory hosts
+            '--disable-blink-features=AutomationControlled'
         ] 
     });
-    
     const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
-        viewport: { width: 1280, height: 720 },
-        ignoreHTTPSErrors: true
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        viewport: { width: 1280, height: 720 }
     });
-    
     const page = await context.newPage();
-
-    // CRITICAL: Inject ChurroAI's stealth script to bypass Cloudflare detection
-    await page.addInitScript(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => false });
-        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-        window.chrome = { runtime: {} };
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-                Promise.resolve({ state: Notification.permission }) :
-                originalQuery(parameters)
-        );
-        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
-    });
     
     try {
         if (onProgress) await onProgress(0);
@@ -112,7 +89,6 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
         
-        // Use domcontentloaded instead of networkidle to avoid Cloudflare hanging the request
         try {
             await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
         } catch (navError) {
@@ -121,19 +97,18 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         }
         
         log('INFO', 'Waiting for homework dashboard to fully render...');
-        await delay(5000); // Give React time to render after domcontentloaded
+        await delay(5000);
 
-        // Check if we are stuck on a Cloudflare challenge
-        const pageText = await page.$eval('body', el => el.innerText).catch(() => '');
-        if (pageText.includes('challenges.cloudflare.com') || pageText.includes('Verify you are human')) {
-            throw new Error('CLOUDFLARE_BLOCKED: The hosting IP is being blocked by Cloudflare. Please try again later or use a different hosting provider.');
-        }
-
+        // FIXED SCRAPER: Safely handles undefined text to prevent crashes
         const assignments = await page.evaluate(() => {
             const allElements = Array.from(document.querySelectorAll('*'));
+            
             const homeworkElements = allElements.filter(el => {
-                const text = el.innerText.toLowerCase();
-                return text.includes('homework') && text.includes('due') && el.children.length < 15; 
+                const text = el.innerText; // Get text safely
+                if (!text) return false;   // Skip if undefined or null
+                
+                const lowerText = text.toLowerCase();
+                return lowerText.includes('homework') && lowerText.includes('due') && el.children.length < 15; 
             });
 
             const uniqueCards = [];
@@ -170,7 +145,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
 }
 
 async function runAutomation(account, waitTime, onProgress) {
-    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
     const page = await browser.newPage();
     
     try {
