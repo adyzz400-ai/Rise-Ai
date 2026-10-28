@@ -13,6 +13,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
     });
     const context = await browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+ an
     });
     const page = await context.newPage();
     
@@ -83,24 +84,19 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
         
+        // CRITICAL FIX: Use 'networkidle' to wait for React API calls to finish
         try {
-            await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
+            await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle', timeout: 30000 });
         } catch (navError) {
-            if (navError.message.includes('ERR_ABORTED')) {
-                log('WARN', 'Navigation aborted (likely due to site redirect), proceeding to look for homework anyway...');
-            } else {
-                log('ERROR', 'Navigation to homework failed', { error: navError.message });
-                throw new Error(`Failed to navigate to homework: ${navError.message}`);
-            }
+            log('WARN', 'Navigation had issues, waiting for network to settle anyway...', { error: navError.message });
+            // Fallback: just wait for the network to be idle on the current page
+            await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
         }
         
-        log('INFO', 'Waiting for homework dashboard to fully load...');
-        // CRITICAL FIX: Increased delay to 8 seconds to allow React to fetch and render homework data
-        await delay(8000); 
-        
-        // Also try to wait for the actual homework list container to become visible
-        await page.waitForSelector('[class*="HomeworkCard"], [class*="PackageCard"], .homework-list', { state: 'visible', timeout: 10000 }).catch(() => {
-            log('WARN', 'Homework container not found, proceeding with scrape anyway...');
+        log('INFO', 'Waiting for homework dashboard to fully render...');
+        // Wait up to 15 seconds for the actual homework list or "Independent Learning" text to appear
+        await page.waitForSelector('[class*="HomeworkCard"], [class*="PackageCard"], .homework-list, text="Independent Learning"', { state: 'visible', timeout: 15000 }).catch(() => {
+            log('WARN', 'Homework container not found within 15s, proceeding with scrape anyway...');
         });
 
         const assignments = await page.evaluate(() => {
@@ -132,7 +128,8 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
 
         log('INFO', `Successfully fetched ${assignments.length} assignments`);
         if (assignments.length === 0) {
-            log('WARN', 'Page HTML snippet:', await page.$eval('body', el => el.innerHTML.substring(0, 500)));
+            // Log more of the page to see if it says "No homework" or is still loading
+            log('WARN', 'Page HTML snippet:', await page.$eval('body', el => el.innerText.substring(0, 300)));
         }
 
         return assignments.length > 0 ? assignments : [{ id: 'default', name: 'Current Homework', dueText: 'Now', percentComplete: 0 }];
@@ -154,7 +151,7 @@ async function runAutomation(account, waitTime, onProgress) {
         if (!result || result.error) throw new Error(result ? result.error : 'Login failed');
         const assignments = result;
 
-        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' }).catch(() => {});
+        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle' }).catch(() => {});
         await delay(1000);
         
         const firstTask = await page.$('[class*="HomeworkCard"], [class*="PackageCard"]');
