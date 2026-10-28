@@ -58,33 +58,56 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         const count = await inputs.count();
         if (count >= 2) {
             await inputs.nth(0).fill(username);
+            log('INFO', 'Filled username/email');
             await inputs.nth(1).fill(password);
+            log('INFO', 'Filled password');
         } else {
             throw new Error('Normal login inputs (.sm-input) not found.');
         }
 
         if (onProgress) await onProgress(5);
         log('INFO', 'Stage 6: Submitting login');
-        await page.locator('.sm-button.login-button').first().click({ force: true });
-        await delay(2000);
+        
+        // CRITICAL FIX: Press "Enter" on the password field to submit the form
+        await inputs.nth(1).press('Enter');
+        log('INFO', 'Pressed Enter on password field');
+        
+        // Also click the button just in case
+        await page.locator('.sm-button.login-button').first().click({ force: true }).catch(() => {});
+
+        // Wait for the URL to actually change to the student dashboard
+        log('INFO', 'Waiting for dashboard navigation...');
+        await page.waitForURL('**/student/**', { timeout: 15000 }).catch(() => {
+            log('WARN', 'Did not navigate to /student/ dashboard. Checking for login errors...');
+        });
+
+        // Check for error messages on the login page
+        const errorText = await page.$eval('.sm-error, .error-message, [class*="error"], [class*="alert"]', el => el.innerText).catch(() => null);
+        if (errorText) {
+            throw new Error(`Login failed with error: ${errorText}`);
+        }
 
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
+        
+        // Explicitly go to the homework page now that we are logged in
         await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
         
-        // CRITICAL: Wait longer for the homework cards to actually render
+        // Wait for the actual homework container to render
         log('INFO', 'Waiting for homework cards to render...');
+        await page.waitForSelector('[class*="HomeworkCard"], [class*="PackageCard"], .homework-list, main', { state: 'visible', timeout: 10000 }).catch(() => {
+            log('WARN', 'Homework container not found, waiting 3 seconds anyway...');
+        });
         await delay(3000); 
 
-        // Extract assignments with a broader, more robust selector
+        // Extract assignments
         const assignments = await page.evaluate(() => {
-            // Try multiple possible selectors for Sparx homework cards
             const selectors = [
                 '[class*="HomeworkCard"]',
                 '[class*="PackageCard"]',
                 '.homework-card',
                 '[data-testid*="homework"]',
-                'a[href*="/student/package/"]' // Fallback to any link going to a package
+                'a[href*="/student/package/"]'
             ];
             
             let cards = [];
@@ -95,7 +118,6 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
 
             return Array.from(cards).map((card, i) => {
                 const text = card.innerText || card.textContent || '';
-                // Clean up the text
                 const cleanText = text.replace(/\s+/g, ' ').trim();
                 return {
                     id: `pkg_${i}_${Date.now()}`,
@@ -103,7 +125,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
                     dueText: cleanText.match(/due\s+(.+?)(?:\s+at|\s+by|\.|$)/i)?.[1]?.trim() || 'Unknown',
                     percentComplete: parseInt(cleanText.match(/(\d+)%/)?.[1] || 0)
                 };
-            }).filter(a => a.name.length > 0); // Filter out empty cards
+            }).filter(a => a.name.length > 0);
         });
 
         log('INFO', `Successfully fetched ${assignments.length} assignments`);
@@ -121,9 +143,55 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
     }
 }
 
-// ... (keep runAutomation the same as before) ...
 async function runAutomation(account, waitTime, onProgress) {
-    // ... (same as previous version)
+    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+    const page = await browser.newPage();
+    
+    try {
+        const assignments = await fastLoginAndFetch(account.username, account.password, account.school_name, onProgress);
+        if (!assignments) throw new Error('Login failed');
+
+        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' });
+        await delay(1000);
+        
+        const firstTask = await page.$('[class*="HomeworkCard"], [class*="PackageCard"]');
+        if (firstTask) await firstTask.click();
+        await delay(2000);
+
+        let questionNum = 1;
+        const totalQuestions = 9;
+        
+        while (questionNum <= totalQuestions) {
+            log('INFO', `Solving question ${questionNum}...`);
+            
+            const questionText = await page.evaluate(() => {
+                const el = document.querySelector('p, div[class*="Text"], span[class*="Question"]');
+                return el ? el.innerText : 'Unknown Question';
+            });
+
+            const answer = await solveQuestion(questionText);
+            log('INFO', `Answer: ${answer}`);
+
+            const input = await page.$('input[type="text"], input[type="number"]');
+            if (input) await input.fill(answer || '0');
+            
+            const submitBtn = await page.$('button[class*="Submit"], button:has-text("Check")');
+            if (submitBtn) await submitBtn.click();
+
+            if (onProgress) await onProgress(questionNum, 1, totalQuestions, 1);
+            
+            questionNum++;
+            await delay(waitTime * 1000);
+            
+            const isComplete = await page.$('text=Task Complete');
+            if (isComplete) break;
+        }
+        log('INFO', 'Automation finished');
+    } catch (error) {
+        log('ERROR', 'Automation error', { error: error.message });
+    } finally {
+        await browser.close();
+    }
 }
 
 module.exports = { fastLoginAndFetch, runAutomation };
