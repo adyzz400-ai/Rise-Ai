@@ -36,7 +36,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
             await page.locator(schoolResultSel).first().waitFor({ state: 'visible', timeout: 5000 });
             await page.locator(schoolResultSel).first().click({ force: true });
         } catch (e) {
-            log('INFO', 'School result not found by selector, pressing Enter');
+            log('INFO', 'School result not found by selector, pressing Enter to select first match');
             await page.keyboard.press('Enter');
         }
 
@@ -61,28 +61,26 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
             log('INFO', 'Filled username/email');
             await inputs.nth(1).fill(password);
             log('INFO', 'Filled password');
+            
+            // CRITICAL: Press Enter on the password field to submit the form reliably
+            await inputs.nth(1).press('Enter');
+            log('INFO', 'Pressed Enter to submit form');
         } else {
             throw new Error('Normal login inputs (.sm-input) not found.');
         }
 
         if (onProgress) await onProgress(5);
-        log('INFO', 'Stage 6: Submitting login');
+        log('INFO', 'Stage 6: Waiting for login redirect...');
         
-        // Click the login button
-        await page.locator('.sm-button.login-button').first().click({ force: true });
-        log('INFO', 'Clicked login button');
-        
-        // Wait for the redirect to happen
-        await delay(4000);
-
-        // Check current URL to see if login actually succeeded
+        // Wait for the URL to change away from the auth page
+        await delay(5000);
         const currentUrl = page.url();
         log('INFO', `Current URL after login attempt: ${currentUrl}`);
 
-        // If we are still on the auth or selectschool page, the login failed
+        // If we are still on the auth or selectschool page, the login was rejected
         if (currentUrl.includes('auth.sparx-learning.com') || currentUrl.includes('selectschool')) {
             const errorText = await page.$eval('.sm-error, .error-message, [class*="error"], [class*="alert"]', el => el.innerText).catch(() => 'No specific error message found');
-            throw new Error(`Login failed. Still on login page. Possible wrong credentials. Error: ${errorText}`);
+            throw new Error(`INVALID_CREDENTIALS: ${errorText}`);
         }
 
         if (onProgress) await onProgress(6);
@@ -134,7 +132,8 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         
     } catch (error) {
         log('ERROR', 'Sparx login/fetch error', { error: error.message });
-        return null;
+        // Pass the specific error up so the modal handler can show it to the user
+        return { error: error.message };
     } finally {
         await browser.close();
     }
@@ -145,8 +144,9 @@ async function runAutomation(account, waitTime, onProgress) {
     const page = await browser.newPage();
     
     try {
-        const assignments = await fastLoginAndFetch(account.username, account.password, account.school_name, onProgress);
-        if (!assignments) throw new Error('Login failed');
+        const result = await fastLoginAndFetch(account.username, account.password, account.school_name, onProgress);
+        if (!result || result.error) throw new Error(result ? result.error : 'Login failed');
+        const assignments = result;
 
         await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' });
         await delay(1000);
