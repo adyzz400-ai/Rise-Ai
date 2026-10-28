@@ -68,39 +68,36 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(5);
         log('INFO', 'Stage 6: Submitting login');
         
-        // CRITICAL FIX: Press "Enter" on the password field to submit the form
-        await inputs.nth(1).press('Enter');
-        log('INFO', 'Pressed Enter on password field');
+        // Click the login button
+        await page.locator('.sm-button.login-button').first().click({ force: true });
+        log('INFO', 'Clicked login button');
         
-        // Also click the button just in case
-        await page.locator('.sm-button.login-button').first().click({ force: true }).catch(() => {});
+        // Wait for the redirect to happen
+        await delay(4000);
 
-        // Wait for the URL to actually change to the student dashboard
-        log('INFO', 'Waiting for dashboard navigation...');
-        await page.waitForURL('**/student/**', { timeout: 15000 }).catch(() => {
-            log('WARN', 'Did not navigate to /student/ dashboard. Checking for login errors...');
-        });
+        // Check current URL to see if login actually succeeded
+        const currentUrl = page.url();
+        log('INFO', `Current URL after login attempt: ${currentUrl}`);
 
-        // Check for error messages on the login page
-        const errorText = await page.$eval('.sm-error, .error-message, [class*="error"], [class*="alert"]', el => el.innerText).catch(() => null);
-        if (errorText) {
-            throw new Error(`Login failed with error: ${errorText}`);
+        // If we are still on the auth or selectschool page, the login failed
+        if (currentUrl.includes('auth.sparx-learning.com') || currentUrl.includes('selectschool')) {
+            const errorText = await page.$eval('.sm-error, .error-message, [class*="error"], [class*="alert"]', el => el.innerText).catch(() => 'No specific error message found');
+            throw new Error(`Login failed. Still on login page. Possible wrong credentials. Error: ${errorText}`);
         }
 
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
         
-        // Explicitly go to the homework page now that we are logged in
-        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
+        try {
+            await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
+        } catch (navError) {
+            log('ERROR', 'Navigation to homework failed', { error: navError.message });
+            throw new Error(`Failed to navigate to homework: ${navError.message}`);
+        }
         
-        // Wait for the actual homework container to render
         log('INFO', 'Waiting for homework cards to render...');
-        await page.waitForSelector('[class*="HomeworkCard"], [class*="PackageCard"], .homework-list, main', { state: 'visible', timeout: 10000 }).catch(() => {
-            log('WARN', 'Homework container not found, waiting 3 seconds anyway...');
-        });
         await delay(3000); 
 
-        // Extract assignments
         const assignments = await page.evaluate(() => {
             const selectors = [
                 '[class*="HomeworkCard"]',
