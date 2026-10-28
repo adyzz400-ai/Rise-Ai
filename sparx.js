@@ -13,7 +13,6 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
     });
     const context = await browser.newContext({
         userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
- an
     });
     const page = await context.newPage();
     
@@ -89,12 +88,10 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
             await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle', timeout: 30000 });
         } catch (navError) {
             log('WARN', 'Navigation had issues, waiting for network to settle anyway...', { error: navError.message });
-            // Fallback: just wait for the network to be idle on the current page
             await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
         }
         
         log('INFO', 'Waiting for homework dashboard to fully render...');
-        // Wait up to 15 seconds for the actual homework list or "Independent Learning" text to appear
         await page.waitForSelector('[class*="HomeworkCard"], [class*="PackageCard"], .homework-list, text="Independent Learning"', { state: 'visible', timeout: 15000 }).catch(() => {
             log('WARN', 'Homework container not found within 15s, proceeding with scrape anyway...');
         });
@@ -128,8 +125,7 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
 
         log('INFO', `Successfully fetched ${assignments.length} assignments`);
         if (assignments.length === 0) {
-            // Log more of the page to see if it says "No homework" or is still loading
-            log('WARN', 'Page HTML snippet:', await page.$eval('body', el => el.innerText.substring(0, 300)));
+            log('WARN', 'Page visible text:', await page.$eval('body', el => el.innerText.substring(0, 300)));
         }
 
         return assignments.length > 0 ? assignments : [{ id: 'default', name: 'Current Homework', dueText: 'Now', percentComplete: 0 }];
