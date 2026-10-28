@@ -7,14 +7,43 @@ const { log } = require('./logger');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function fastLoginAndFetch(username, password, schoolName, onProgress) {
+    // Use ChurroAI's exact launch arguments for maximum stealth
     const browser = await chromium.launch({ 
         headless: true, 
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled'] 
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--ignore-certificate-errors',
+            '--disable-blink-features=AutomationControlled',
+            '--disable-features=IsolateOrigins,site-per-process',
+            '--ignore-certificate-errors-spki-list'
+        ] 
     });
+    
     const context = await browser.newContext({
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
+        viewport: { width: 1280, height: 720 },
+        ignoreHTTPSErrors: true
     });
+    
     const page = await context.newPage();
+
+    // CRITICAL: Inject ChurroAI's stealth script to bypass Cloudflare detection
+    await page.addInitScript(() => {
+        Object.defineProperty(navigator, 'webdriver', { get: () => false });
+        Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+        window.chrome = { runtime: {} };
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+        Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
+    });
     
     try {
         if (onProgress) await onProgress(0);
@@ -83,29 +112,30 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
         
+        // Use domcontentloaded instead of networkidle to avoid Cloudflare hanging the request
         try {
-            await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle', timeout: 30000 });
+            await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
         } catch (navError) {
-            log('WARN', 'Navigation had issues, waiting for network to settle anyway...', { error: navError.message });
-            await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+            log('WARN', 'Navigation had issues, waiting for load state anyway...', { error: navError.message });
+            await page.waitForLoadState('domcontentloaded', { timeout: 10000 }).catch(() => {});
         }
         
         log('INFO', 'Waiting for homework dashboard to fully render...');
-        await page.waitForSelector('text="Homework"', { state: 'visible', timeout: 15000 }).catch(() => {
-            log('WARN', 'Homework text not found within 15s, proceeding with scrape anyway...');
-        });
+        await delay(5000); // Give React time to render after domcontentloaded
 
-        // RESILIENT SCRAPER: Looks for any element containing "Homework" and "due"
+        // Check if we are stuck on a Cloudflare challenge
+        const pageText = await page.$eval('body', el => el.innerText).catch(() => '');
+        if (pageText.includes('challenges.cloudflare.com') || pageText.includes('Verify you are human')) {
+            throw new Error('CLOUDFLARE_BLOCKED: The hosting IP is being blocked by Cloudflare. Please try again later or use a different hosting provider.');
+        }
+
         const assignments = await page.evaluate(() => {
             const allElements = Array.from(document.querySelectorAll('*'));
-            
-            // Find elements that contain both "Homework" and "due" (case-insensitive)
             const homeworkElements = allElements.filter(el => {
                 const text = el.innerText.toLowerCase();
                 return text.includes('homework') && text.includes('due') && el.children.length < 15; 
             });
 
-            // Deduplicate: keep only the most specific (smallest) containers
             const uniqueCards = [];
             for (const el of homeworkElements) {
                 if (!uniqueCards.some(c => c.contains(el) && c !== el)) {
@@ -148,13 +178,11 @@ async function runAutomation(account, waitTime, onProgress) {
         if (!result || result.error) throw new Error(result ? result.error : 'Login failed');
         const assignments = result;
 
-        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'networkidle' }).catch(() => {});
+        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' }).catch(() => {});
         await delay(1000);
         
-        // Click the first homework card found by our resilient scraper logic
         const firstTask = await page.$('text="Homework"');
         if (firstTask) {
-            // Find the parent card to click
             const card = await firstTask.evaluateHandle(el => {
                 let parent = el.parentElement;
                 while (parent && parent.children.length > 15) {
