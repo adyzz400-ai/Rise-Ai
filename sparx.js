@@ -86,11 +86,16 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         if (onProgress) await onProgress(6);
         log('INFO', 'Stage 7: Navigating to homework dashboard');
         
+        // RESILIENT NAVIGATION: Catch ERR_ABORTED and proceed anyway
         try {
             await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded', timeout: 15000 });
         } catch (navError) {
-            log('ERROR', 'Navigation to homework failed', { error: navError.message });
-            throw new Error(`Failed to navigate to homework: ${navError.message}`);
+            if (navError.message.includes('ERR_ABORTED')) {
+                log('WARN', 'Navigation aborted (likely due to site redirect), proceeding to look for homework anyway...');
+            } else {
+                log('ERROR', 'Navigation to homework failed', { error: navError.message });
+                throw new Error(`Failed to navigate to homework: ${navError.message}`);
+            }
         }
         
         log('INFO', 'Waiting for homework cards to render...');
@@ -132,7 +137,6 @@ async function fastLoginAndFetch(username, password, schoolName, onProgress) {
         
     } catch (error) {
         log('ERROR', 'Sparx login/fetch error', { error: error.message });
-        // Pass the specific error up so the modal handler can show it to the user
         return { error: error.message };
     } finally {
         await browser.close();
@@ -148,7 +152,7 @@ async function runAutomation(account, waitTime, onProgress) {
         if (!result || result.error) throw new Error(result ? result.error : 'Login failed');
         const assignments = result;
 
-        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' });
+        await page.goto('https://maths.sparx-learning.com/student/homework', { waitUntil: 'domcontentloaded' }).catch(() => {});
         await delay(1000);
         
         const firstTask = await page.$('[class*="HomeworkCard"], [class*="PackageCard"]');
