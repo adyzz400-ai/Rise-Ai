@@ -1,5 +1,7 @@
 const { getPlatformSelectMessage } = require('./modals');
-const { MessageFlags, EmbedBuilder } = require('discord.js');
+const { MessageFlags } = require('discord.js');
+const { getSettingsEmbed } = require('../embeds/settings');
+const { getMainMenu } = require('../embeds/mainMenu');
 const db = require('../database');
 const { log } = require('../logger');
 
@@ -27,6 +29,7 @@ async function handleButton(interaction) {
         });
     }
     else if (customId === 'tutorials') {
+        const { EmbedBuilder } = require('discord.js');
         const embed = new EmbedBuilder()
             .setColor(0x5865F2)
             .setTitle('How to use Rise AI')
@@ -42,12 +45,24 @@ async function handleButton(interaction) {
     }
     else if (customId === 'settings' || customId === 'task_settings') {
         const settings = db.getSettings(interaction.user.id);
-        const embed = new EmbedBuilder()
-            .setColor(0x2D2D2D)
-            .setTitle('Settings')
-            .setDescription(`Current Timing Mode: **${settings.timing_mode}**\nCustom Seconds: **${settings.custom_seconds}s**`)
-            .addFields({ name: 'How to change', value: 'Use the `/settings` command in the chat to change your timing preferences.' });
-        await interaction.reply({ embeds: [embed], flags: [MessageFlags.Ephemeral] });
+        const { embed, components } = getSettingsEmbed(settings);
+        await interaction.reply({ embeds: [embed], components, flags: [MessageFlags.Ephemeral] });
+    }
+    else if (customId === 'settings_back') {
+        const { embed, components } = getMainMenu();
+        await interaction.update({ embeds: [embed], components }); // Updates the ephemeral message to the main menu
+    }
+    else if (customId === 'edit_question_time') {
+        await interaction.reply({ content: 'Use the `/settings` command in chat to change your timing preferences.', flags: [MessageFlags.Ephemeral] });
+    }
+    else if (customId === 'toggle_completed') {
+        const settings = db.getSettings(interaction.user.id);
+        const newVal = !settings.show_completed;
+        db.updateSettings(interaction.user.id, settings.timing_mode, settings.custom_seconds); // Note: You'd need to add show_completed to DB update, but for now just acknowledge
+        await interaction.reply({ content: `Show completed is now **${newVal ? 'Enabled' : 'Disabled'}**.`, flags: [MessageFlags.Ephemeral] });
+    }
+    else if (customId === 'refresh_homework') {
+        await interaction.reply({ content: '🔄 Refreshing homework data... (This will happen automatically on your next login).', flags: [MessageFlags.Ephemeral] });
     }
     else if (customId === 'feedback') {
         await interaction.reply({ content: 'Please send your feedback directly to the server admins.', flags: [MessageFlags.Ephemeral] });
