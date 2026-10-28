@@ -84,15 +84,47 @@ async function handleJoinQueueSubmit(interaction) {
         });
     });
     
-    if (!assignments) {
-        log('ERROR', `Login failed for user ${interaction.user.id}`);
+        // 5. Perform the REAL login and fetch homework
+    const result = await fastLoginAndFetch(username, password, schoolName, async (stage) => {
+        const { embed, files } = getProgressEmbed(stage, funFact);
+        await interaction.editReply({ embeds: [embed], files: files || [] });
+    });
+    
+    // Check if it returned an error object instead of assignments
+    if (!result || result.error) {
+        log('ERROR', `Login failed for user ${interaction.user.id}: ${result ? result.error : 'Unknown error'}`);
+        
+        let errorMsg = '❌ Login failed. Please check your credentials.';
+        if (result && result.error.includes('INVALID_CREDENTIALS')) {
+            errorMsg = '❌ **Invalid Username or Password.**\nPlease double-check your Sparx login details and ensure this account is registered to **'+schoolName+'**.';
+        }
+        
         await interaction.editReply({ 
-            content: '❌ Login failed. Check your credentials.', 
+            content: errorMsg, 
             embeds: [], 
             files: [] 
         });
         return;
     }
+    
+    const assignments = result;
+
+    // 6. Success! Show the task selection menu
+    await interaction.editReply({ 
+        content: '✅ Account saved for next time.', 
+        embeds: [], 
+        files: [] 
+    });
+    
+    const { embed: taskEmbed, components: taskComponents } = getTaskSelectEmbed(username, assignments);
+    await interaction.followUp({ 
+        embeds: [taskEmbed], 
+        components: taskComponents, 
+        flags: [MessageFlags.Ephemeral] 
+    });
+    
+    pendingLogins.delete(interaction.user.id);
+
 
     // Success! Show the task selection menu
     await interaction.editReply({ 
